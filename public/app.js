@@ -88,8 +88,27 @@ async function getJSON(url) {
 }
 function showLocked() {
   $('#topbar').classList.add('hidden'); $('#tabbar').style.display = 'none';
-  $('#view').innerHTML = `<div class="empty" style="padding-top:18vh"><div class="ask-hero"><div class="orb" style="background:#111">${I.mark}</div></div>
-    <h3>Accesso riservato</h3><p>Questa rassegna è privata. Apri il link completo che hai ricevuto per accedere.</p></div>`;
+  $('#view').innerHTML = `<div class="empty" style="padding-top:12vh"><div class="ask-hero"><div class="orb" style="background:#111">${I.mark}</div></div>
+    <h3>Accesso riservato</h3><p>Questa rassegna è privata. Incolla qui il link privato che hai ricevuto: basta farlo una volta sola su questo dispositivo.</p>
+    <form id="unlock" class="ask-form" style="position:static;margin:18px auto 0;max-width:460px">
+      <input id="unlockIn" placeholder="Incolla il link privato" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <button>Entra</button></form>
+    <p id="unlockMsg" class="hint" style="margin-top:10px"></p></div>`;
+  $('#unlock').addEventListener('submit', async e => {
+    e.preventDefault();
+    const v = $('#unlockIn').value.trim();
+    const k = (v.match(/[?#&]k=([A-Za-z0-9_-]{43})/) || v.match(/^([A-Za-z0-9_-]{43})$/) || [])[1];
+    if (!k) { $('#unlockMsg').textContent = 'Link non valido: copia il link privato completo.'; return; }
+    try { localStorage.setItem(KKEY, k); } catch { }
+    const q = new URLSearchParams(location.search); q.set('k', k);
+    history.replaceState(null, '', location.pathname + '?' + q.toString() + '#/');
+    $('#unlockMsg').textContent = 'Verifico…';
+    try {
+      await load(); lastLoad = Date.now();
+      $('#topbar').classList.remove('hidden'); $('#tabbar').style.display = '';
+      route(); toast('Accesso attivato su questo dispositivo');
+    } catch { $('#unlockMsg').textContent = 'Il link non è corretto. Controlla di averlo copiato tutto.'; }
+  });
 }
 
 async function load(force) {
