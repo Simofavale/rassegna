@@ -3,9 +3,10 @@ name: Aggiorna notizie
 on:
   # L'orario programmato di GitHub è inaffidabile (spesso non parte): resta solo come riserva.
   # Il ritmo vero lo dà il job "prossimo" in fondo, che a fine giro riavvia questo workflow.
+  # Il pulsante ↻ dell'app avvia subito un giro con workflow_dispatch.
   schedule:
     - cron: "*/30 * * * *"
-  workflow_dispatch:          # avvio manuale e catena automatica
+  workflow_dispatch:
   push:
     branches: [main]
 
@@ -15,14 +16,14 @@ permissions:
   id-token: write
   actions: write
 
-concurrency:
-  group: pages
-  cancel-in-progress: false
-
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # un solo giro di generazione alla volta; quelli nuovi aspettano (non vengono annullati)
+    concurrency:
+      group: rassegna-build
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
 
@@ -57,6 +58,9 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    concurrency:
+      group: rassegna-deploy
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -65,7 +69,8 @@ jobs:
         uses: actions/deploy-pages@v4
 
   # Catena: aspetta ~12 minuti e fa partire il prossimo aggiornamento (anche se questo giro è fallito).
-  # Se c'è già un altro giro in coda o in corso, non ne avvia un secondo.
+  # Non occupa la coda di generazione, quindi un aggiornamento chiesto dall'app parte subito.
+  # Se nel frattempo è partito un giro più recente (es. dal pulsante ↻), lascia proseguire quello.
   prossimo:
     needs: [build, deploy]
     if: always()
@@ -78,8 +83,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          ME: ${{ github.run_id }}
         run: |
-          altri=$(gh run list --repo "$REPO" --workflow aggiorna.yml --limit 20 --json databaseId,status \
-            --jq "[.[] | select(.databaseId != ${{ github.run_id }}) | select(.status==\"queued\" or .status==\"in_progress\" or .status==\"waiting\" or .status==\"pending\")] | length")
-          echo "altri giri attivi: $altri"
-          if [ "$altri" = "0" ]; then gh workflow run aggiorna.yml --repo "$REPO" --ref main; fi
+          piu_recenti=$(gh run list --repo "$REPO" --workflow aggiorna.yml --limit 20 --json databaseId \
+            --jq "[.[] | select(.databaseId > $ME)] | length")
+          echo "giri più recenti di questo: $piu_recenti"
+          if [ "$piu_recenti" = "0" ]; then gh workflow run aggiorna.yml --repo "$REPO" --ref main; fi

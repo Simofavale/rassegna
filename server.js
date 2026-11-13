@@ -277,7 +277,7 @@ function buildStories(items) {
   return clusters.map(c => {
     const its = c.items.sort((a, b) => a.time - b.time);
     const srcs = [...new Map(its.map(i => [i.src, { src: i.src, domain: i.domain }])).values()];
-    const it = its.filter(i => i.lang === 'it');
+    const it = its.filter(i => !i.srcLang);           // articoli originali italiani
     const pool = it.length ? it : its;
     // titolo: quello italiano più "informativo"
     const head = centralItem(pool, its);
@@ -526,7 +526,7 @@ if (process.argv.includes('--newkey')) {
   const out = path.resolve(process.argv[process.argv.indexOf('--build') + 1] || '_site');
   (async () => {
     await refresh();
-    for (let k = 0; k < 2 && state.trPending > 0; k++) { console.log('  attendo 60s e riprovo le traduzioni…'); await new Promise(r => setTimeout(r, 60e3)); await refresh(); }
+    for (let k = 0; k < 1 && state.trPending > 0; k++) { console.log("  attendo 30s e riprovo le traduzioni…"); await new Promise(r => setTimeout(r, 30e3)); await refresh(); }
     if (!state.stories.length) { console.error('Nessuna notizia scaricata: build annullata'); process.exit(1); }
     fs.rmSync(out, { recursive: true, force: true });
     fs.cpSync(path.join(ROOT, 'public'), out, { recursive: true });
@@ -544,6 +544,8 @@ if (process.argv.includes('--newkey')) {
     fs.writeFileSync(path.join(out, 'api/feed.json'), enc(state.json));
     fs.writeFileSync(path.join(out, 'api/sources.json'), enc(JSON.stringify(sourcesList())));
     fs.writeFileSync(path.join(out, '.nojekyll'), '');
+    // file minuscolo che l'app controlla per sapere quando è pronto un aggiornamento
+    fs.writeFileSync(path.join(out, 'api/version.json'), JSON.stringify({ updated: state.updated }));
     fs.writeFileSync(path.join(out, 'robots.txt'), 'User-agent: *\nDisallow: /\n');
     console.log(keyB64 ? '  dati cifrati: accesso solo con link segreto' : '  ATTENZIONE: RASSEGNA_KEY non impostata, dati in chiaro');
     console.log(`Sito generato in ${out}: ${state.stories.length} notizie`);

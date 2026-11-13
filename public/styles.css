@@ -352,3 +352,37 @@ html { -webkit-text-size-adjust: 100%; }
 .trow .loc { font: 700 9.5px var(--f-mono); color: #16a34a; border: 1px solid #16a34a; border-radius: 3px; padding: 1px 4px; flex: none; }
 .trow .tname { max-width: 52%; }
 .seg .pill { font-size: 14px; }
+
+/* ---------- riordino trascinando ---------- */
+.dh { display: grid; place-items: center; width: 34px; height: 34px; margin: -6px 2px -6px -8px; color: var(--muted); touch-action: none; cursor: grab; flex: none; }
+.dh svg { width: 22px; height: 22px; }
+#colList li.dragging { background: var(--surface); box-shadow: 0 8px 24px rgba(0,0,0,.18); border-radius: 12px; position: relative; z-index: 2; transform: scale(1.02); }
+#colList li { transition: background .15s; }
+.chip-edit { display: grid; place-items: center; padding: 3px 10px; }
+.chip-edit svg { width: 17px; height: 17px; }
+/* elenco testate */
+.slist { display: flex; flex-direction: column; }
+.srow { display: flex; align-items: center; gap: 12px; padding: 10px 4px; border-bottom: 1px solid var(--line); }
+.srow .sn { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.srow .sn b { font-family: var(--f-title); font-weight: 600; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.srow .sn small { font: 11.5px var(--f-mono); color: var(--muted); text-transform: uppercase; }
+.srow .chev { color: var(--muted); }
+.srow .chev svg { width: 18px; height: 18px; }
+#view.wide .slist { max-width: 720px; }
+
+/* ---------- barra in basso stile iOS ---------- */
+#tabbar { background: color-mix(in srgb, var(--bg) 82%, transparent); -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px); }
+#tabbar a { font-size: 10.5px; font-weight: 500; letter-spacing: .01em; gap: 2px; padding-top: 6px; justify-content: flex-start; }
+#tabbar .ti { width: 27px; height: 27px; }
+#tabbar .ti-on { display: none; }
+#tabbar a.on .ti-on { display: block; }
+#tabbar a.on .ti-off { display: none; }
+#tabbar a.on { color: var(--ink); }
+#tabbar .ti-ai { width: 27px !important; height: 27px !important; border-radius: 8px; }
+#tabbar .ti-ai svg { width: 17px; height: 17px; }
+
+/* intestazione Top News */
+.top-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.top-head h2 { font-style: italic; font-size: 26px; }
+.top-head .pill { display: inline-flex; align-items: center; gap: 6px; }
+.top-head .pill svg { width: 18px; height: 18px; }

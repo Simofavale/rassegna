@@ -150,7 +150,9 @@ function toast(msg, ms = 2200, onClick) {
 
 // ---------- colonne ----------
 function columns() {
-  const base = [...D.categories, ...P.custom.map(c => ({ ...c, kind: 'custom' }))];
+  const cats = [...D.categories];
+  if (!cats.some(c => c.id === 'testate')) { const i = cats.findIndex(c => c.id === 'locali'); cats.splice(i >= 0 ? i + 1 : 3, 0, { id: 'testate', name: 'Testate', kind: 'smart' }); }
+  const base = [...cats, ...P.custom.map(c => ({ ...c, kind: 'custom' }))];
   const order = P.order || base.map(c => c.id);
   const ids = [...order.filter(id => base.some(c => c.id === id)), ...base.map(c => c.id).filter(id => !order.includes(id))];
   return ids.map(id => base.find(c => c.id === id));
@@ -179,14 +181,31 @@ function visibleStories() {
   return out;
 }
 const localEnabled = src => !P.localOff.includes(src);
+// Top News: priorità alle notizie coperte da più testate italiane, di oggi, senza doppioni e con varietà di temi
+const itSources = s => s._nit ?? (s._nit = new Set(s.articles.filter(x => !x.tr).map(x => x.src)).size);
+function similarStory(a, b) {
+  const ta = a._tok || tokens(a.title), tb = b._tok || tokens(b.title);
+  let k = 0; for (const w of ta) if (tb.has(w)) k++;
+  return k / Math.min(ta.size || 1, tb.size || 1) > 0.34 && k >= 3;
+}
+function topNews(all) {
+  const now = Date.now(), hours = s => (now - s.time) / 36e5;
+  const score = s => { const it = itSources(s), fr = s.n - it; return (it + fr * 0.3) / (1 + hours(s) / 9); };
+  let pool = all.filter(s => hours(s) < 24 && itSources(s) >= 2);
+  if (pool.length < 15) pool = all.filter(s => hours(s) < 36 && s.n >= 2);
+  pool.sort((a, b) => score(b) - score(a));
+  const picked = [], later = [], perCat = {};
+  for (const s of pool) {
+    if (picked.some(p => similarStory(p, s))) continue;                // stessa vicenda già presente
+    if (picked.length < 15 && (perCat[s.cat] || 0) >= 4) { later.push(s); continue; } // varietà nei primi 15
+    picked.push(s); perCat[s.cat] = (perCat[s.cat] || 0) + 1;
+  }
+  return [...picked, ...later.filter(s => !picked.some(p => similarStory(p, s)))];
+}
 function storiesFor(col) {
   const now = Date.now(), all = visibleStories();
   const hours = s => (now - s.time) / 36e5;
-  if (col === 'top-news') {
-    let list = all.filter(s => s.n >= 3 && hours(s) < 36);
-    if (list.length < 20) list = all.filter(s => s.n >= 2 && hours(s) < 48);
-    return list.sort((a, b) => b.n / (1 + hours(b) / 10) - a.n / (1 + hours(a) / 10));
-  }
+  if (col === 'top-news') return topNews(all);
   if (col === 'per-te') {
     const favs = new Set(P.fav), interests = [...P.interests, ...P.places, ...P.authors.map(a => a)];
     const personal = favs.size || interests.length;
@@ -330,7 +349,8 @@ function more(n) {
 // ---------- vista: colonna ----------
 function renderChips(active) {
   const nav = $('#chips');
-  nav.innerHTML = visibleCols().map(c => `<a class="chip ${c.id === active ? 'on' : ''}" href="#/c/${c.id}" data-col="${c.id}">${esc(c.name)}</a>`).join('');
+  nav.innerHTML = visibleCols().map(c => `<a class="chip ${c.id === active ? 'on' : ''}" href="#/c/${c.id}" data-col="${c.id}">${esc(c.name)}</a>`).join('')
+    + `<button class="chip chip-edit" data-editmenu aria-label="Personalizza il menu"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg></button>`;
   const on = nav.querySelector('.on'); if (on) nav.scrollLeft = on.offsetLeft - nav.clientWidth / 2 + on.clientWidth / 2;
 }
 function viewColumn(col) {
@@ -338,7 +358,15 @@ function viewColumn(col) {
   P.lastCol = col; save();
   renderChips(col);
   if (col === 'podcast') return paged('c:podcast', D.podcasts, podCard);
+  if (col === 'testate') return viewTestateList();
+  const cc = P.custom.find(x => x.id === col);
+  if (cc && cc.sources.length === 1 && !cc.keywords.length && !(cc.cats || []).length) return viewTestata(cc.sources[0], true);
   const c = columns().find(x => x.id === col);
+  if (col === 'top-news') {
+    const list = storiesFor('top-news');
+    const h = `<div class="col-head top-head"><h2>Le top news di oggi</h2><button class="pill" data-listentop>${I.head}<span>Ascolta</span></button></div>`;
+    return paged('c:top-news', list, card, h);
+  }
   if (col === 'locali') {
     const nLoc = (D.sources || []).filter(x => x.local && feedEnabled(x.name) && localEnabled(x.name) && x.ok).length;
     const h = `<div class="col-head"><div class="kicker">Notizie locali · ${nLoc} testate attive</div>
@@ -349,13 +377,94 @@ function viewColumn(col) {
   paged('c:' + col, storiesFor(col), card, head);
 }
 function viewTopic(kind, val) {
-  const label = { luogo: 'Luogo', interesse: 'Interesse', autore: 'Autore', testata: 'Testata' }[kind] || 'Argomento';
-  const listKey = { luogo: 'places', interesse: 'interests', autore: 'authors', testata: 'fav' }[kind];
+  if (kind === 'testata') return viewTestata(val);
+  const label = { luogo: 'Luogo', interesse: 'Interesse', autore: 'Autore' }[kind] || 'Argomento';
+  const listKey = { luogo: 'places', interesse: 'interests', autore: 'authors' }[kind];
   const following = listKey && P[listKey].some(x => norm(x) === norm(val));
+  const inMenu = menuColumnFor({ keywords: [val] });
   const head = `<div class="page-h"><button class="icon-btn" data-back>${I.back}</button><h1>${label}</h1><span></span></div>
-    <div class="col-head" style="display:flex;align-items:end;justify-content:space-between;gap:12px"><div><div class="kicker">${label}</div><h2>${esc(val)}</h2></div>
-    ${listKey ? `<button class="pill ${following ? 'on' : ''}" data-follow="${esc(listKey)}" data-val="${esc(val)}">${following ? (kind === 'testata' ? 'Preferita' : 'Seguito') : (kind === 'testata' ? 'Aggiungi alle preferite' : 'Segui')}</button>` : ''}</div>`;
+    <div class="col-head"><div class="kicker">${label}</div><h2>${esc(val)}</h2>
+    <div class="seg" style="margin:10px 0 0">${listKey ? `<button class="pill ${following ? 'on' : ''}" data-follow="${esc(listKey)}" data-val="${esc(val)}">${following ? 'Seguito ✓' : 'Segui'}</button>` : ''}
+    <button class="pill ${inMenu ? 'on' : ''}" data-menucol="kw" data-val="${esc(val)}">${inMenu ? 'Nel menu ✓' : '+ Aggiungi al menu'}</button></div></div>`;
   paged(`t:${kind}:${val}`, storiesForTopic(kind, val), card, head);
+}
+
+// ---------- feed di una testata ----------
+function srcLogo(name, size = 44) {
+  const m = D.srcMeta && D.srcMeta.get(name); const d = m && m.domain;
+  return `<span class="logo" style="width:${size}px;height:${size}px;margin:0;border-radius:${size > 30 ? 12 : 50}px">${d ? `<img alt="" src="${fav(d)}" onerror="this.replaceWith(document.createTextNode('${esc(name[0])}'))">` : esc(name[0])}</span>`;
+}
+function testataItems(name) {
+  const out = [];
+  for (const s of D.stories) for (const a of s.articles) if (a.src === name) out.push({ s, a });
+  return out.sort((x, y) => y.a.time - x.a.time);
+}
+function artCard({ s, a }) {
+  return `<article class="card" data-open="${s.id}">
+    <div class="card-media">${media(s)}<div class="logos">${s.sources.slice(0, 6).map(x => `<span class="logo" title="${esc(x.src)}"><img loading="lazy" alt="" src="${fav(x.domain)}"></span>`).join('')}${s.n > 6 ? `<span class="logo more">+${s.n - 6}</span>` : ''}</div></div>
+    <div class="card-body">
+      <div class="time">${I.clock}<span>${dayLabel(a.time)} ${new Date(a.time).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}</span>${s.n > 1 ? `<span class="nsrc">· anche su altre ${s.n - 1} testate</span>` : ''}</div>
+      <h2 class="title"><span>${esc(a.title)}</span></h2>
+      <p class="summary">${esc(a.desc || s.summary || '')} <span class="more">Leggi di più</span></p>
+    </div>
+    <div class="actions">
+      <button class="act" data-listen="${s.id}" aria-label="Ascolta">${I.head}</button>
+      <button class="act ${P.saved.includes(s.id) ? 'on' : ''}" data-save="${s.id}" aria-label="Salva">${I.mark}</button>
+      <a class="act" href="${esc(a.link)}" target="_blank" rel="noopener" aria-label="Apri l'articolo originale" onclick="event.stopPropagation()">${I.ext}</a>
+      <span class="grow"></span><button class="ask" data-ask="${s.id}">${I.spark}Chiedi</button>
+    </div></article>`;
+}
+function viewTestata(name, asColumn) {
+  const m = (D.srcMeta && D.srcMeta.get(name)) || { name };
+  const hasFeed = m.ok || m.feeds > 0, on = hasFeed && feedEnabled(name), isFav = P.fav.includes(name);
+  const inMenu = menuColumnFor({ sources: [name] });
+  const items = testataItems(name);
+  const head = `${asColumn ? '' : `<div class="page-h"><button class="icon-btn" data-back>${I.back}</button><h1>Testata</h1><span></span></div>`}
+    <div class="col-head" style="display:flex;gap:14px;align-items:center">${srcLogo(name, 52)}<div style="min-width:0"><div class="kicker">${m.local ? 'Testata locale · ' : ''}${items.length} articoli nelle ultime 72 ore</div><h2 style="font-size:24px">${esc(titleCase(name))}</h2></div></div>
+    <div class="seg">
+      ${hasFeed ? `<button class="pill ${on ? 'on' : ''}" data-feedtoggle="${esc(name)}">${on ? 'Feed attivo ✓' : 'Attiva feed'}</button>` : `<button class="pill" data-addsrc="${esc(name)}">Cerca feed</button>`}
+      <button class="pill ${isFav ? 'on' : ''}" data-fav="${esc(name)}">${isFav ? '★ Preferita' : '☆ Preferita'}</button>
+      <button class="pill ${inMenu ? 'on' : ''}" data-menucol="src" data-val="${esc(name)}">${inMenu ? 'Nel menu ✓' : '+ Aggiungi al menu'}</button>
+      ${m.site ? `<a class="pill" href="${esc(m.site)}" target="_blank" rel="noopener">Sito ↗</a>` : m.domain ? `<a class="pill" href="https://${esc(m.domain)}" target="_blank" rel="noopener">Sito ↗</a>` : ''}
+    </div>
+    ${hasFeed && !on ? '<p class="hint">Il feed di questa testata è spento: queste notizie non compaiono nelle altre colonne finché non lo attivi.</p>' : ''}`;
+  paged(`ts:${name}`, items, artCard, head, `<div class="empty"><h3>Nessun articolo</h3><p>${hasFeed ? 'Questa testata non ha pubblicato articoli nelle ultime 72 ore.' : 'Per questa testata non c’è ancora un feed: tocca “Cerca feed” e incolla il link del sito.'}</p></div>`);
+}
+function viewTestateList() {
+  const all = (D.sources || []).filter(x => (x.ok || x.feeds > 0));
+  let q = viewTestateList.q || '';
+  const onlyOn = viewTestateList.onlyOn ?? true;
+  const draw = () => {
+    const f = norm(q);
+    const list = all.filter(x => (!onlyOn || feedEnabled(x.name)) && (!f || norm(x.name).includes(f)))
+      .sort((a, b) => (P.fav.includes(b.name) - P.fav.includes(a.name)) || (b.count - a.count));
+    $('#tlist').innerHTML = list.map(x => `<a class="srow" href="#/t/testata/${encodeURIComponent(x.name)}">${srcLogo(x.name, 40)}<span class="sn"><b>${esc(titleCase(x.name))}</b><small>${x.count} articoli${x.local ? ' · locale' : ''}${feedEnabled(x.name) ? '' : ' · feed spento'}</small></span>${P.fav.includes(x.name) ? '<span style="color:#f5b301">★</span>' : ''}<span class="chev">${I.right}</span></a>`).join('') || '<p class="hint">Nessuna testata.</p>';
+  };
+  $('#view').classList.add('wide');
+  $('#view').innerHTML = `<div class="col-head"><div class="kicker">Sfoglia per testata</div><h2>Testate</h2></div>
+    <label class="search">${I.search}<input id="tlq" placeholder="Cerca una testata" value="${esc(q)}" autocomplete="off"></label>
+    <div class="seg"><button class="pill ${onlyOn ? 'on' : ''}" data-tl="on">Attive</button><button class="pill ${onlyOn ? '' : 'on'}" data-tl="all">Tutte con feed (${all.length})</button><a class="pill" href="#/profilo/testate">Gestisci</a></div>
+    <div id="tlist" class="slist"></div>`;
+  draw();
+  $('#tlq').addEventListener('input', e => { q = viewTestateList.q = e.target.value.trim(); draw(); });
+  $$('[data-tl]').forEach(b => b.onclick = () => { viewTestateList.onlyOn = b.dataset.tl === 'on'; viewTestateList(); });
+  current = { key: 'c:testate' };
+}
+
+// ---------- menu in alto: colonne personalizzate rapide ----------
+function menuColumnFor({ sources = [], keywords = [] }) {
+  return P.custom.find(c => (sources.length && c.sources.length === 1 && c.sources[0] === sources[0] && !c.keywords.length) || (keywords.length && c.keywords.length === 1 && norm(c.keywords[0]) === norm(keywords[0]) && !c.sources.length));
+}
+function toggleMenuColumn(type, val) {
+  const spec = type === 'src' ? { sources: [val] } : { keywords: [val] };
+  const ex = menuColumnFor(spec);
+  if (ex) { P.custom = P.custom.filter(c => c !== ex); if (P.lastCol === ex.id) P.lastCol = 'per-te'; toast(`${titleCase(val)} tolto dal menu`); }
+  else {
+    const c = { id: 'u-' + Date.now().toString(36), name: titleCase(val), keywords: spec.keywords || [], sources: spec.sources || [], cats: [] };
+    P.custom.push(c); P.order = [...columns().map(x => x.id).filter(id => id !== c.id), c.id]; P.hidden = P.hidden.filter(id => id !== c.id);
+    toast(`${c.name} aggiunto al menu in alto`);
+  }
+  save(); refreshCols();
 }
 
 // ---------- vista: notizia ----------
@@ -569,6 +678,7 @@ function viewLocali(head) {
 // ---------- aggiunta testata tramite link (salvata nel repository, cifrata) ----------
 const GH_KEY = 'rassegna:gh';
 const ghToken = () => { try { return localStorage.getItem(GH_KEY) || ''; } catch { return ''; } };
+const ghTokenUrl = () => { const r = repoInfo(); return r ? `https://github.com/settings/personal-access-tokens/new?name=${encodeURIComponent('Rassegna')}&description=${encodeURIComponent("Permette all'app Rassegna di aggiungere testate e aggiornare le notizie")}&target_name=${encodeURIComponent(r.owner)}&expires_in=none&contents=write&actions=write` : '#'; };
 const repoInfo = () => { const owner = location.hostname.endsWith('.github.io') ? location.hostname.split('.')[0] : ''; const repo = location.pathname.split('/').filter(Boolean)[0] || ''; return owner && repo ? { owner, repo } : null; };
 async function aesEncrypt(text) {
   const k = getKey(); const raw = b64(k.replace(/-/g, '+').replace(/_/g, '/') + '=');
@@ -605,7 +715,7 @@ async function ghUserFeeds(update) {
 function addSourceModal(prefName = '', local = false) {
   const r = repoInfo();
   const m = $('#modal'); m.hidden = false;
-  const tokenUrl = r ? `https://github.com/settings/personal-access-tokens/new?name=${encodeURIComponent('Rassegna - testate')}&description=${encodeURIComponent("Permette all'app Rassegna di aggiungere testate")}&target_name=${encodeURIComponent(r.owner)}&expires_in=none&contents=write` : '#';
+  const tokenUrl = ghTokenUrl();
   const guess = prefName ? 'www.' + norm(prefName).replace(/['’.]/g, '').replace(/[^a-z0-9]+/g, '') + '.it' : '';
   m.innerHTML = `<form class="sheet" id="srcForm"><h3>Aggiungi testata</h3>
     <p>Incolla il link del sito (o del suo feed RSS): il feed viene trovato in automatico e la testata diventa attiva dal prossimo aggiornamento, entro circa 15 minuti.</p>
@@ -614,7 +724,7 @@ function addSourceModal(prefName = '', local = false) {
     <label style="display:flex;gap:8px;align-items:center;text-transform:none;font:15px var(--f-body);color:var(--ink)"><input type="checkbox" id="srcLocal" ${local ? 'checked' : ''}> È una testata locale (va anche in “Locali”)</label>
     <div id="ghBox" ${ghToken() ? 'hidden' : ''} style="margin-top:14px;padding:12px;border:1px solid var(--line);border-radius:10px">
       <p style="margin:0 0 8px;color:var(--ink)"><b>Serve un'autorizzazione, una volta sola per dispositivo.</b></p>
-      <p style="margin:0 0 8px">1. Tocca il pulsante: si apre GitHub con il modulo già compilato.<br>2. In “Repository access” scegli <b>Only select repositories</b> → <b>${esc(r ? r.repo : '')}</b>, controlla che “Contents” sia <b>Read and write</b>, poi <b>Generate token</b>.<br>3. Copia il codice che inizia con <code>github_pat_</code> e incollalo qui.</p>
+      <p style="margin:0 0 8px">1. Tocca il pulsante: si apre GitHub con il modulo già compilato.<br>2. In “Repository access” scegli <b>Only select repositories</b> → <b>${esc(r ? r.repo : '')}</b>, controlla che “Contents” e “Actions” siano <b>Read and write</b>, poi <b>Generate token</b>.<br>3. Copia il codice che inizia con <code>github_pat_</code> e incollalo qui.</p>
       <a class="pill" href="${tokenUrl}" target="_blank" rel="noopener" style="display:inline-block;margin-bottom:8px">Crea autorizzazione su GitHub</a>
       <input type="text" id="ghTok" placeholder="Incolla qui il codice github_pat_…" autocapitalize="off" autocorrect="off" spellcheck="false">
     </div>
@@ -646,6 +756,23 @@ function addSourceModal(prefName = '', local = false) {
     }
   };
 }
+function ghSetupModal(why, onDone) {
+  const r = repoInfo(); const m = $('#modal'); m.hidden = false;
+  m.innerHTML = `<form class="sheet" id="ghForm"><h3>Collega GitHub</h3>
+    <p>${why}</p>
+    <p style="margin:0 0 8px">1. Tocca il pulsante: si apre GitHub con il modulo già compilato.<br>2. In “Repository access” scegli <b>Only select repositories</b> → <b>${esc(r ? r.repo : '')}</b>; controlla che “Contents” e “Actions” siano <b>Read and write</b>, poi <b>Generate token</b>.<br>3. Copia il codice che inizia con <code>github_pat_</code> e incollalo qui. Si fa una volta sola per dispositivo.</p>
+    <a class="pill" href="${ghTokenUrl()}" target="_blank" rel="noopener" style="display:inline-block;margin-bottom:8px">Crea autorizzazione su GitHub</a>
+    <input type="text" id="ghTok2" placeholder="Incolla qui il codice github_pat_…" autocapitalize="off" autocorrect="off" spellcheck="false" required>
+    <p id="ghMsg" class="hint" style="margin-top:10px"></p>
+    <div class="row"><button type="button" data-close>Annulla</button><button class="primary">Collega</button></div></form>`;
+  $('#ghForm').onsubmit = e => { e.preventDefault(); const t = $('#ghTok2').value.trim(); if (!/^(github_pat_|ghp_)/.test(t)) { $('#ghMsg').textContent = 'Il codice deve iniziare con github_pat_'; return; } try { localStorage.setItem(GH_KEY, t); } catch { } m.hidden = true; onDone && onDone(); };
+}
+async function ghDispatch() {
+  const r = repoInfo(); if (!r) throw new Error('offline');
+  const res = await fetch(`https://api.github.com/repos/${r.owner}/${r.repo}/actions/workflows/aggiorna.yml/dispatches`, { method: 'POST', headers: { Authorization: 'Bearer ' + ghToken(), Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' }, body: JSON.stringify({ ref: 'main' }) });
+  if (res.status === 401 || res.status === 403 || res.status === 404) throw Object.assign(new Error('auth'), { auth: true });
+  if (!res.ok && res.status !== 204) throw new Error('HTTP ' + res.status);
+}
 async function removeUserSource(name) {
   if (!confirm(`Rimuovere ${name} dalle tue testate?`)) return;
   try {
@@ -656,15 +783,14 @@ async function removeUserSource(name) {
 }
 function colRows(editing) {
   const cols = columns();
-  return cols.map((c, i) => `<li class="${P.hidden.includes(c.id) ? 'off' : ''}" data-colgo="${c.id}">
+  return cols.map((c, i) => `<li class="${P.hidden.includes(c.id) ? 'off' : ''}" data-colgo="${c.id}">${editing ? `<span class="dh" aria-label="Trascina per spostare"><svg viewBox="0 0 24 24"><path d="M4 8h16M4 12h16M4 16h16"/></svg></span>` : ''}
     ${c.kind === 'smart' ? I.chip : c.kind === 'custom' ? I.custom : c.kind === 'local' ? `<span class="ci" style="color:#16a34a">${I.pin}</span>` : I.folder}<span class="grow">${esc(c.name)}</span>
-    ${editing ? `${i > 0 ? `<button class="mini" data-colup="${c.id}" aria-label="Su">${I.up}</button>` : ''}
-      <button class="mini" data-colhide="${c.id}" aria-label="Mostra/nascondi">${I.eye}</button>
+    ${editing ? `<button class="mini" data-colhide="${c.id}" aria-label="Mostra/nascondi">${I.eye}</button>
       ${c.kind === 'custom' ? `<button class="mini" data-coldel="${c.id}" aria-label="Elimina">${I.trash}</button>` : ''}` : ''}
   </li>`).join('');
 }
 function viewRaccolte(head) {
-  $('#view').innerHTML = `${head}<p class="hint">Riordina, nascondi o crea le colonne che compaiono in alto nella schermata Adesso.</p>
+  $('#view').innerHTML = `${head}<p class="hint">Tieni premuta la maniglia ≡ e trascina per riordinare. 👁 nasconde o mostra una colonna nel menu in alto.</p>
     <div style="display:flex;gap:10px;margin-bottom:12px"><button class="pill" data-newcol>+ Nuova colonna</button></div>
     <ul id="colList" class="inpage" style="list-style:none;margin:0;padding:0">${colRows(true)}</ul>`;
 }
@@ -677,6 +803,8 @@ function viewSettings(head) {
     ${getKey() ? `<div class="group-h">Condividi l'accesso</div>
     <p class="hint">La rassegna è privata: la vede solo chi ha questo link. Mandalo solo a chi vuoi tu.</p>
     <div class="seg"><button class="pill" data-copylink>Copia il link privato</button></div>` : ''}
+    ${repoInfo() ? `<div class="group-h">Collegamento GitHub</div><p class="hint">${ghToken() ? 'Collegato: il pulsante ↻ aggiorna le notizie sul momento e puoi aggiungere testate.' : 'Non collegato: il pulsante ↻ carica l’ultimo aggiornamento automatico (ogni 15 minuti circa).'}</p>
+    <div class="seg">${ghToken() ? '<button class="pill" data-ghoff>Scollega</button>' : '<button class="pill on" data-ghsetup>Collega GitHub</button>'}</div>` : ''}
     <div class="group-h">Apri su iPhone o iPad</div>
     <div id="lanBox" class="hint">…</div>
     <p class="hint">Facoltativo: in Safari tocca <b>Condividi</b> → <b>Aggiungi alla schermata Home</b>. Non installa nulla: crea solo un collegamento che apre la pagina a schermo intero.</p>
@@ -769,6 +897,22 @@ function stopSpeak() {
   speaking = null;
 }
 
+// Ascolta le top news in sequenza (titolo + riassunto), come il pulsante di Column
+function listenTop(btn) {
+  if (!('speechSynthesis' in window)) return toast('Sintesi vocale non disponibile');
+  if (speechSynthesis.speaking) { speechSynthesis.cancel(); btn.classList.remove('on'); btn.querySelector('span').textContent = 'Ascolta'; return; }
+  stopSpeak();
+  const items = storiesFor('top-news').slice(0, 15);
+  const voice = speechSynthesis.getVoices().find(v => v.lang?.startsWith('it'));
+  btn.classList.add('on'); btn.querySelector('span').textContent = 'Stop';
+  items.forEach((s, i) => {
+    const u = new SpeechSynthesisUtterance(`${i === 0 ? 'Le top news di oggi. ' : ''}${s.title}. ${firstSentences(s.summary || '', 2)}`);
+    u.lang = 'it-IT'; if (voice) u.voice = voice; u.rate = 1.03;
+    if (i === items.length - 1) u.onend = () => { btn.classList.remove('on'); btn.querySelector('span').textContent = 'Ascolta'; };
+    speechSynthesis.speak(u);
+  });
+}
+
 // ---------- player podcast ----------
 const audio = $('#audio');
 function playPod(id) {
@@ -785,12 +929,46 @@ $('#plToggle').onclick = () => audio.paused ? audio.play() : audio.pause();
 $('#plClose').onclick = () => { audio.pause(); audio.removeAttribute('src'); audio.dataset.id = ''; $('#player').hidden = true; };
 $('#plBar').onclick = e => { if (audio.duration) { const r = e.currentTarget.getBoundingClientRect(); audio.currentTime = (e.clientX - r.left) / r.width * audio.duration; } };
 
+// ---------- riordino delle raccolte trascinando la maniglia ----------
+document.addEventListener('pointerdown', e => {
+  const h = e.target.closest('.dh'); if (!h) return;
+  const li = h.closest('li'), ul = li.parentElement;
+  e.preventDefault(); e.stopPropagation();
+  try { h.setPointerCapture(e.pointerId); } catch { }
+  li.classList.add('dragging'); if (navigator.vibrate) navigator.vibrate(10);
+  let scrollTimer = null;
+  const move = ev => {
+    const y = ev.clientY;
+    const sibs = [...ul.children].filter(x => x !== li);
+    const after = sibs.find(x => { const r = x.getBoundingClientRect(); return y < r.top + r.height / 2; });
+    if (after !== li.nextElementSibling) ul.insertBefore(li, after || null);
+    // scorrimento automatico vicino ai bordi
+    const box = (ul.closest('#drawer') ? ul : document.scrollingElement);
+    const top = ul.closest('#drawer') ? ul.getBoundingClientRect().top : 0;
+    const bottom = ul.closest('#drawer') ? ul.getBoundingClientRect().bottom : window.innerHeight - 80;
+    clearInterval(scrollTimer);
+    if (y < top + 50) scrollTimer = setInterval(() => box.scrollTop -= 8, 16);
+    else if (y > bottom - 50) scrollTimer = setInterval(() => box.scrollTop += 8, 16);
+  };
+  const end = () => {
+    clearInterval(scrollTimer);
+    li.classList.remove('dragging');
+    h.removeEventListener('pointermove', move);
+    P.order = [...ul.children].map(x => x.dataset.colgo).filter(Boolean);
+    save(); h.dataset.justDragged = '1'; setTimeout(() => delete h.dataset.justDragged, 300);
+    if (!$('#topbar').classList.contains('hidden')) renderChips(P.lastCol);
+  };
+  h.addEventListener('pointermove', move);
+  h.addEventListener('pointerup', end, { once: true });
+  h.addEventListener('pointercancel', end, { once: true });
+});
+
 // ---------- drawer ----------
 let editing = false;
-function openDrawer() { editing = false; $('#editCols').classList.remove('on'); $('#colList').innerHTML = colRows(false); $('#drawer').classList.add('open'); $('#scrim').classList.add('on'); }
+function openDrawer() { editing = false; $('#editCols').classList.remove('on'); $('#editCols').textContent = 'Modifica'; $('#drawerHint').hidden = true; $('#colList').innerHTML = colRows(false); $('#drawer').classList.add('open'); $('#scrim').classList.add('on'); }
 function closeDrawer() { $('#drawer').classList.remove('open'); $('#scrim').classList.remove('on'); }
 $('#menuBtn').onclick = openDrawer; $('#scrim').onclick = closeDrawer;
-$('#editCols').onclick = () => { editing = !editing; $('#editCols').classList.toggle('on', editing); $('#editCols').textContent = editing ? 'Fine' : 'Modifica'; $('#colList').innerHTML = colRows(editing); };
+$('#editCols').onclick = () => { editing = !editing; $('#editCols').classList.toggle('on', editing); $('#editCols').textContent = editing ? 'Fine' : 'Modifica'; $('#colList').innerHTML = colRows(editing); $('#drawerHint').hidden = !editing; };
 $('#addCol').onclick = () => newColumn();
 function refreshCols() { $$('#colList').forEach(ul => ul.innerHTML = colRows(ul.classList.contains('inpage') || editing)); if (!$('#topbar').classList.contains('hidden')) renderChips(P.lastCol); }
 
@@ -837,8 +1015,9 @@ function toggleList(key, val, on) {
   for (const k of Object.keys(mem)) if (k.startsWith('c:')) delete mem[k];
 }
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-refresh],[data-copylink],[data-homeguide],[data-feedtoggle],[data-localtoggle],[data-addsrc],[data-removeuser],[data-listen],[data-save],[data-share],[data-ask],[data-open],[data-pod],[data-back],[data-acc],[data-fs],[data-more-arts],[data-more-pods],[data-ent],[data-fav],[data-mute],[data-unmute],[data-follow],[data-unfollow],[data-goto],[data-colgo],[data-colup],[data-colhide],[data-coldel],[data-newcol],[data-theme],[data-setfs],[data-reload],[data-reset],[data-clear-history],[data-close]');
+  const t = e.target.closest('[data-refresh],[data-editmenu],[data-listentop],[data-copylink],[data-homeguide],[data-menucol],[data-ghsetup],[data-ghoff],[data-feedtoggle],[data-localtoggle],[data-addsrc],[data-removeuser],[data-listen],[data-save],[data-share],[data-ask],[data-open],[data-pod],[data-back],[data-acc],[data-fs],[data-more-arts],[data-more-pods],[data-ent],[data-fav],[data-mute],[data-unmute],[data-follow],[data-unfollow],[data-goto],[data-colgo],[data-colup],[data-colhide],[data-coldel],[data-newcol],[data-theme],[data-setfs],[data-reload],[data-reset],[data-clear-history],[data-close]');
   if (!t) return;
+  if (e.target.closest('.dh')) return;
   const d = t.dataset;
   if (d.listen) { e.stopPropagation(); return speak(d.listen, t); }
   if (d.save) { e.stopPropagation(); return toggleSave(d.save); }
@@ -852,7 +1031,7 @@ document.addEventListener('click', e => {
   if ('fs' in d) { const steps = [0.92, 1, 1.1, 1.2]; P.fs = steps[(steps.indexOf(P.fs) + 1) % steps.length] || 1; save(); applyPrefs(); toast('Dimensione testo: ' + Math.round(P.fs * 100) + '%'); return; }
   if (d.moreArts) { const s = getStory(d.moreArts); const m = new Set(P.muted); $('#arts').innerHTML = s.articles.filter(a => !m.has(a.src)).map(artRow).join(''); t.remove(); return; }
   if (d.morePods) { const s = getStory(d.morePods); $('#pods').innerHTML = relatedPods(s).map(podRow).join(''); t.remove(); return; }
-  if (d.fav) { toggleList('fav', d.fav); return viewTestate.redraw?.(); }
+  if (d.fav) { toggleList('fav', d.fav); if (location.hash.startsWith('#/t/testata') || location.hash.startsWith('#/c/u-')) return route(); return viewTestate.redraw?.(); }
   if (d.unfollow && location.hash.startsWith('#/profilo/locali')) { e.preventDefault(); toggleList(d.unfollow, d.val, false); return viewLocali.redraw?.(); }
   if (d.follow && location.hash.startsWith('#/profilo/locali')) { toggleList(d.follow, d.val, true); return viewLocali.redraw?.(); }
   if (d.mute) { toggleList('muted', d.mute, true); toast(`${d.mute}: non segui più questa testata`); return viewTestate.redraw?.(); }
@@ -877,7 +1056,12 @@ document.addEventListener('click', e => {
   if ('clearHistory' in d) { P.history = []; save(); return viewHistory(); }
   if ('close' in d) { $('#modal').hidden = true; return; }
   if ('homeguide' in d) return homeGuide();
-  if (d.feedtoggle) { toggleFeed(d.feedtoggle); return viewTestate.redraw?.(); }
+  if ('listentop' in d) return listenTop(t);
+  if ('editmenu' in d) { openDrawer(); $('#editCols').click(); return; }
+  if ('ghsetup' in d) return ghSetupModal('Per aggiornare le notizie sul momento e aggiungere testate.', () => viewSettings($('.page-h').outerHTML));
+  if ('ghoff' in d) { try { localStorage.removeItem(GH_KEY); } catch { } return viewSettings($('.page-h').outerHTML); }
+  if (d.menucol) { toggleMenuColumn(d.menucol, d.val); return route(); }
+  if (d.feedtoggle) { toggleFeed(d.feedtoggle); if (location.hash.startsWith('#/t/testata') || location.hash.startsWith('#/c/u-')) return route(); return viewTestate.redraw?.(); }
   if (d.localtoggle) { const n = d.localtoggle; const on = feedEnabled(n) && localEnabled(n);
     if (on) { P.localOff = [...new Set([...P.localOff, n])]; } else { P.localOff = P.localOff.filter(x => x !== n); if (!feedEnabled(n)) toggleFeed(n); }
     save(); bumpPrefs(); for (const k of Object.keys(mem)) delete mem[k]; return viewLocali.redraw?.(); }
@@ -912,20 +1096,45 @@ function homeGuide() {
 let refreshing = false, lastLoad = 0;
 async function refreshNow() {
   if (refreshing) return;
+  const online = !!repoInfo();
+  if (online && !ghToken()) {
+    hidePtr();
+    // senza autorizzazione: carica comunque l'ultima versione pubblicata e propone il collegamento
+    await applyNewData(true);
+    return ghSetupModal('Per aggiornare le notizie <b>sul momento</b> dal pulsante ↻ (e per aggiungere testate) l’app deve poter avviare l’aggiornamento sul tuo GitHub.', () => refreshNow());
+  }
   refreshing = true;
   $('#refreshBtn').classList.add('spin'); $('#ptr').classList.add('spin');
   $$('[data-refresh],[data-reload]').forEach(b => b.textContent = 'Aggiornamento…');
-  toast('Aggiorno le notizie da tutte le testate…', 60000);
   try {
-    const before = new Set(D.stories.map(s => s.id));
-    await load(true); lastLoad = Date.now();
-    const nuove = D.stories.filter(s => !before.has(s.id)).length;
-    for (const k in mem) delete mem[k];
-    window.scrollTo(0, 0); route();
-    toast(nuove ? `${nuove} nuove notizie` : 'Sei già aggiornato');
-  } catch { toast('Aggiornamento non riuscito: controlla la connessione'); }
-  refreshing = false;
-  $('#refreshBtn').classList.remove('spin'); $('#ptr').classList.remove('spin'); hidePtr();
+    if (!online) { await applyNewData(true, true); return; }
+    const startVer = await fetch('api/version.json?t=' + Date.now(), { cache: 'no-store' }).then(r => r.json()).catch(() => ({ updated: D.updated }));
+    await ghDispatch();
+    const t0 = Date.now();
+    const tick = () => { const sec = Math.round((Date.now() - t0) / 1000); toast(`Scarico le notizie da tutte le testate… ${sec < 60 ? sec + ' s' : Math.floor(sec / 60) + ' min ' + (sec % 60) + ' s'}`, 15000); };
+    tick();
+    while (Date.now() - t0 < 6 * 60e3) {
+      await new Promise(r => setTimeout(r, 6000)); tick();
+      const v = await fetch('api/version.json?t=' + Date.now(), { cache: 'no-store' }).then(r => r.json()).catch(() => null);
+      if (v && v.updated > startVer.updated) { await applyNewData(false); return; }
+    }
+    toast('L’aggiornamento sta impiegando più del solito: le notizie arriveranno a breve', 6000);
+  } catch (err) {
+    if (err.auth) { try { localStorage.removeItem(GH_KEY); } catch { } toast('Autorizzazione GitHub non valida: ricollegala', 5000); }
+    else toast('Aggiornamento non riuscito: controlla la connessione');
+  } finally {
+    refreshing = false;
+    $('#refreshBtn').classList.remove('spin'); $('#ptr').classList.remove('spin'); hidePtr();
+    $$('[data-refresh]').forEach(b => b.textContent = 'Aggiorna ↻'); $$('[data-reload]').forEach(b => b.textContent = 'Aggiorna ora');
+  }
+}
+async function applyNewData(quiet, force) {
+  const before = new Set(D.stories.map(s => s.id));
+  await load(!!force); lastLoad = Date.now();
+  const nuove = D.stories.filter(s => !before.has(s.id)).length;
+  for (const k in mem) delete mem[k];
+  window.scrollTo(0, 0); route();
+  toast(nuove ? `${nuove} nuove notizie` : (quiet ? 'Notizie ricaricate' : 'Aggiornato: nessuna notizia nuova'));
 }
 $('#refreshBtn').onclick = refreshNow;
 
