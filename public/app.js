@@ -54,10 +54,24 @@ applyPrefs();
 // ---------- dati ----------
 const D = { updated: 0, categories: [], stories: [], podcasts: [], byId: new Map(), sources: null };
 let loaded = false;
-// ---------- accesso riservato (link segreto con chiave dopo #k=) ----------
+// ---------- accesso riservato (link segreto con la chiave nell'indirizzo, ?k=...) ----------
+// La chiave resta nell'indirizzo: così anche il collegamento sulla schermata Home di iPhone/iPad
+// (che non condivide la memoria di Safari) si apre già con l'accesso.
 const KKEY = 'rassegna:key';
-const getKey = () => { try { return localStorage.getItem(KKEY) || ''; } catch { return ''; } };
-(() => { const m = location.hash.match(/^#k=([A-Za-z0-9_-]{43})/); if (m) { try { localStorage.setItem(KKEY, m[1]); } catch { } history.replaceState(null, '', location.pathname + location.search + '#/'); } })();
+const KEY_RE = /^[A-Za-z0-9_-]{43}$/;
+const getKey = () => {
+  const q = new URLSearchParams(location.search).get('k'); if (q && KEY_RE.test(q)) return q;
+  try { return localStorage.getItem(KKEY) || ''; } catch { return ''; }
+};
+const privateLink = () => location.origin + location.pathname + '?k=' + getKey();
+(() => {
+  const m = location.hash.match(/^#k=([A-Za-z0-9_-]{43})/); // vecchi link con #k=
+  const k = m ? m[1] : getKey();
+  if (!k) return;
+  try { localStorage.setItem(KKEY, k); } catch { }
+  const q = new URLSearchParams(location.search);
+  if (q.get('k') !== k || m) { q.set('k', k); history.replaceState(null, '', location.pathname + '?' + q.toString() + (m ? '#/' : location.hash)); }
+})();
 class Locked extends Error { }
 const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 async function getJSON(url) {
@@ -380,6 +394,7 @@ function viewProfile(sub) {
       <li><a href="#/profilo/interessi">${I.heart}Personalizza interessi<span class="chev">${I.right}</span></a></li>
       <li><a href="#/profilo/salvati">${I.mark}Salvati<span class="chev">${I.right}</span></a></li>
       <li><a href="#/profilo/impostazioni">${I.gear}Impostazioni<span class="chev">${I.right}</span></a></li>
+      ${isStandalone() ? '' : `<li><button data-homeguide>${I.plus}Aggiungi alla schermata Home<span class="chev">${I.right}</span></button></li>`}
     </ul>
     <p class="hint" style="margin-top:22px">Ultimo aggiornamento: ${new Date(D.updated).toLocaleString('it-IT')} · ${D.stories.length} notizie da ${new Set(D.stories.flatMap(s => s.sources.map(x => x.src))).size} testate</p>`;
     return;
@@ -633,7 +648,7 @@ function toggleList(key, val, on) {
   for (const k of Object.keys(mem)) if (k.startsWith('c:')) delete mem[k];
 }
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-refresh],[data-copylink],[data-listen],[data-save],[data-share],[data-ask],[data-open],[data-pod],[data-back],[data-acc],[data-fs],[data-more-arts],[data-more-pods],[data-ent],[data-fav],[data-mute],[data-unmute],[data-follow],[data-unfollow],[data-goto],[data-colgo],[data-colup],[data-colhide],[data-coldel],[data-newcol],[data-theme],[data-setfs],[data-reload],[data-reset],[data-clear-history],[data-close]');
+  const t = e.target.closest('[data-refresh],[data-copylink],[data-homeguide],[data-listen],[data-save],[data-share],[data-ask],[data-open],[data-pod],[data-back],[data-acc],[data-fs],[data-more-arts],[data-more-pods],[data-ent],[data-fav],[data-mute],[data-unmute],[data-follow],[data-unfollow],[data-goto],[data-colgo],[data-colup],[data-colhide],[data-coldel],[data-newcol],[data-theme],[data-setfs],[data-reload],[data-reset],[data-clear-history],[data-close]');
   if (!t) return;
   const d = t.dataset;
   if (d.listen) { e.stopPropagation(); return speak(d.listen, t); }
@@ -670,10 +685,31 @@ document.addEventListener('click', e => {
   if ('reset' in d) { if (confirm('Ripristinare tutte le preferenze, la cronologia e i salvati?')) { P = { ...DEF }; save(); applyPrefs(); location.hash = '#/'; refreshCols(); } return; }
   if ('clearHistory' in d) { P.history = []; save(); return viewHistory(); }
   if ('close' in d) { $('#modal').hidden = true; return; }
-  if ('copylink' in d) { const link = location.origin + location.pathname + '#k=' + getKey(); (navigator.clipboard ? navigator.clipboard.writeText(link) : Promise.reject()).then(() => toast('Link privato copiato'), () => prompt('Copia il link privato:', link)); return; }
+  if ('homeguide' in d) return homeGuide();
+  if ('copylink' in d) { const link = privateLink(); (navigator.clipboard ? navigator.clipboard.writeText(link) : Promise.reject()).then(() => toast('Link privato copiato'), () => prompt('Copia il link privato:', link)); return; }
 });
 $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') e.currentTarget.hidden = true; });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') { $('#modal').hidden = true; closeDrawer(); } });
+
+// ---------- guida "Aggiungi alla schermata Home" ----------
+const isStandalone = () => navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+function homeGuide() {
+  const ua = navigator.userAgent;
+  const ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  const safari = ios && !/CriOS|FxiOS|EdgiOS|OPiOS|GSA\//.test(ua);
+  const share = '<svg viewBox="0 0 24 24" style="width:18px;height:18px;vertical-align:-3px"><path d="M12 3v12M8 7l4-4 4 4M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1"/></svg>';
+  const m = $('#modal'); m.hidden = false;
+  m.innerHTML = `<div class="sheet"><h3>Aggiungi alla schermata Home</h3>
+    <p>Non installa nulla: crea un'icona che apre Rassegna a schermo intero, già con il tuo accesso.</p>
+    ${ios && !safari ? `<p style="color:var(--ink)"><b>Stai usando un browser diverso da Safari.</b> Il modo più sicuro è aprire questo link in <b>Safari</b> e seguire i passaggi qui sotto. In alternativa, in Chrome: tocca ${share} in alto a destra → <b>Aggiungi alla schermata Home</b>.</p>
+      <div class="seg"><button class="pill" data-copylink>Copia il link per Safari</button></div>` : ''}
+    <ol style="padding-left:20px;margin:6px 0 0;line-height:1.55">
+      <li>In Safari tocca <b>${share} Condividi</b>.<br><span class="hint">Su iPhone è in basso; se non lo vedi, tocca prima <b>•••</b> in basso a destra. Su iPad è in alto a destra.</span></li>
+      <li>Scorri l'elenco verso il basso e tocca <b>Aggiungi alla schermata Home</b>.<br><span class="hint">Se non c'è: in fondo all'elenco tocca <b>Modifica azioni</b> e aggiungila.</span></li>
+      <li>Lascia attivo <b>Apri come app web</b>, se compare, e tocca <b>Aggiungi</b>.</li>
+    </ol>
+    <div class="row"><button class="primary" data-close>Ho capito</button></div></div>`;
+}
 
 // ---------- aggiornamento notizie ----------
 let refreshing = false, lastLoad = 0;
