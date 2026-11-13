@@ -11,6 +11,39 @@ const crypto = require('crypto');
 const PORT = Number(process.env.PORT) || 5173;
 const ROOT = __dirname;
 const FEEDS = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/feeds.json'), 'utf8'));
+const readJSON = (f, d) => { try { return JSON.parse(fs.readFileSync(path.join(ROOT, f), 'utf8')); } catch { return d; } };
+const { discoverFeed } = require('./lib-discover');
+// Feed trovati automaticamente per le testate dell'elenco: spenti di default, si accendono dall'app
+const FEEDS_FOUND = readJSON('data/feeds-scoperti.json', []).map(f => ({ ...f, def: false }));
+// Testate aggiunte dall'utente tramite link (file cifrato scritto dall'app, decifrato con RASSEGNA_KEY)
+function decryptJSON(obj) {
+  if (!obj || !obj.enc) return obj;
+  const key = process.env.RASSEGNA_KEY ? Buffer.from(process.env.RASSEGNA_KEY, 'base64url') : null;
+  if (!key) return null;
+  const iv = Buffer.from(obj.iv, 'base64'), raw = Buffer.from(obj.data, 'base64');
+  const d = crypto.createDecipheriv('aes-256-gcm', key, iv); d.setAuthTag(raw.subarray(raw.length - 16));
+  return JSON.parse(Buffer.concat([d.update(raw.subarray(0, raw.length - 16)), d.final()]).toString('utf8'));
+}
+const discovered = new Map();
+async function loadFeeds() {
+  let user = [];
+  try { user = decryptJSON(readJSON('data/feeds-utente.json', [])) || []; } catch (e) { console.warn('feed utente non leggibili:', e.message); }
+  const userFeeds = (await pool(user, 6, async u => {
+    let feed = u.feed;
+    if (!feed) {
+      if (!discovered.has(u.site)) discovered.set(u.site, await discoverFeed(u.site).catch(() => null));
+      const d = discovered.get(u.site); if (!d) { console.warn('  feed non trovato per', u.site); return null; }
+      feed = d.feed; u.domain = u.domain || d.domain;
+    }
+    const domain = u.domain || new URL(/^https?:/.test(u.site || feed) ? (u.site || feed) : 'https://' + u.site).hostname.replace(/^www\./, '');
+    return { src: (u.name || domain).toUpperCase(), domain, url: feed, cat: null, local: !!u.local, user: true, site: u.site, def: true };
+  })).filter(f => f && f.url);
+  const byUrl = new Map();
+  for (const f of [...FEEDS, ...FEEDS_FOUND, ...userFeeds]) if (!byUrl.has(f.url)) byUrl.set(f.url, f);
+  // una testata dell'elenco aggiunta a mano diventa attiva
+  const userSrc = new Set(userFeeds.map(f => f.src));
+  return [...byUrl.values()].map(f => userSrc.has(f.src) ? { ...f, def: true } : f);
+}
 const PODCASTS = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/podcasts.json'), 'utf8'));
 const TESTATE = fs.readFileSync(path.join(ROOT, 'data/testate.txt'), 'utf8')
   .split('|').map(s => s.trim()).filter(Boolean);
@@ -19,7 +52,7 @@ const WINDOW_MS = 72 * 3600 * 1000;
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36';
 
 const CATEGORIES = [
-  ['per-te', 'Per Te', 'smart'], ['top-news', 'Top News', 'smart'], ['podcast', 'Podcast', 'smart'],
+  ['per-te', 'Per Te', 'smart'], ['top-news', 'Top News', 'smart'], ['podcast', 'Podcast', 'smart'], ['locali', 'Locali', 'local'],
   ['ambiente', 'Ambiente'], ['cronache', 'Cronache'], ['cultura', 'Cultura'], ['economia', 'Economia'],
   ['finanza', 'Finanza'], ['geopolitica', 'Geopolitica'], ['lavoro-e-imprese', 'Lavoro e Imprese'],
   ['mondo', 'Mondo'], ['motori', 'Motori'], ['politica-italia', 'Politica Italia'], ['salute', 'Salute'],
@@ -253,7 +286,7 @@ function buildStories(items) {
     const summary = trim(headDesc.length > 80 ? headDesc : (descs[0] || headDesc || ''), 520);
     const votes = {}; for (const i of its) { votes[i.cat] = (votes[i.cat] || 0) + (i.feedCat ? 2 : 1); }
     const cat = Object.entries(votes).sort((a, b) => b[1] - a[1])[0][0];
-    const cats = [...new Set([cat, ...Object.keys(votes).filter(k => votes[k] >= 2), ...secondaryCats(its.map(i => i.title).join(' '))])];
+    const cats = [...new Set([cat, ...Object.keys(votes).filter(k => votes[k] >= 2), ...secondaryCats(its.map(i => i.title).join(' ')), ...(its.some(i => i.local) ? ['locali'] : [])])];
     const images = [...new Set([...its.filter(i => i.lang === 'it'), ...its].map(i => i.image).filter(Boolean))].slice(0, 4);
     const image = images[0] || '';
     const latest = Math.max(...its.map(i => i.time));
@@ -404,16 +437,17 @@ const state = { updated: 0, stories: [], podcasts: [], feedStatus: [], gz: null,
 async function refresh() {
   const t0 = Date.now();
   const now = Date.now();
-  const results = await pool(FEEDS, 16, async f => {
+  const FEEDS_ALL = await loadFeeds();
+  const results = await pool(FEEDS_ALL, 16, async f => {
     const xml = await getText(f.url);
-    const items = parseFeed(xml);
+    const items = parseFeed(xml).slice(0, f.def === false ? 8 : 200);
     return items.map(i => {
       const time = i.time && i.time <= now + 3600e3 ? i.time : now - 6 * 3600e3;
-      return { ...i, time, src: f.src, domain: f.domain, lang: f.lang || 'it', feedCat: f.cat, cat: f.cat || classify(i.title + ' ' + i.desc, i.link, i.cats) };
+      return { ...i, time, src: f.src, domain: f.domain, lang: f.lang || 'it', local: !!f.local, feedCat: f.cat, cat: f.cat || classify(i.title + ' ' + i.desc, i.link, i.cats) };
     }).filter(i => now - i.time < WINDOW_MS);
   });
   const seen = new Set(); const items = [];
-  state.feedStatus = FEEDS.map((f, k) => {
+  state.feedStatus = FEEDS_ALL.map((f, k) => {
     const r = results[k]; if (!Array.isArray(r)) return { ...f, ok: false, error: String(r && r.error && r.error.message || r) };
     let added = 0;
     for (const i of r) { const key = i.link.replace(/[?#].*$/, ''); if (seen.has(key)) continue; seen.add(key); items.push(i); added++; }
@@ -432,7 +466,7 @@ async function refresh() {
   state.json = payload;
   state.gz = zlib.gzipSync(payload);
   const ok = state.feedStatus.filter(f => f.ok).length;
-  console.log(`[${new Date().toLocaleTimeString('it-IT')}] ${items.length} articoli · ${stories.length} notizie · ${podcasts.length} episodi · feed ok ${ok}/${FEEDS.length} · ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+  console.log(`[${new Date().toLocaleTimeString('it-IT')}] ${items.length} articoli · ${stories.length} notizie · ${podcasts.length} episodi · feed ok ${ok}/${state.feedStatus.length} · ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 }
 let retryTimer = null;
 function ensure() {
@@ -446,8 +480,13 @@ function ensure() {
 
 function sourcesList() {
   const active = new Map();
-  for (const f of state.feedStatus) { const a = active.get(f.src) || { feeds: 0, ok: 0, count: 0, domain: f.domain }; a.feeds++; if (f.ok) a.ok++; a.count += f.count || 0; active.set(f.src, a); }
-  return TESTATE.map(name => ({ name, ...(active.get(name) || { feeds: 0, ok: 0, count: 0 }) }));
+  for (const f of state.feedStatus) {
+    const a = active.get(f.src) || { feeds: 0, ok: 0, count: 0, domain: f.domain, def: false, local: false, user: false, site: f.site || '' };
+    a.feeds++; if (f.ok) a.ok++; a.count += f.count || 0; if (f.def !== false) a.def = true; if (f.local) a.local = true; if (f.user) a.user = true; if (f.area) a.area = f.area;
+    active.set(f.src, a);
+  }
+  const names = [...new Set([...TESTATE, ...active.keys()])].sort((a, b) => a.localeCompare(b, 'it'));
+  return names.map(name => ({ name, ...(active.get(name) || { feeds: 0, ok: 0, count: 0, def: false, local: false, user: false }) }));
 }
 
 // ---------- HTTP ----------

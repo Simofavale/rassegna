@@ -41,7 +41,7 @@ const I = {
 
 // ---------- preferenze (localStorage) ----------
 const KEY = 'rassegna:v1';
-const DEF = { order: null, hidden: [], custom: [], fav: [], muted: [], places: [], authors: [], interests: [], saved: [], histData: {}, history: [], fs: 1, theme: 'auto', lastCol: 'per-te' };
+const DEF = { order: null, hidden: [], custom: [], fav: [], muted: [], feedOn: [], localOff: [], pending: [], places: [], authors: [], interests: [], saved: [], histData: {}, history: [], fs: 1, theme: 'auto', lastCol: 'per-te' };
 let P;
 try { P = { ...DEF, ...JSON.parse(localStorage.getItem(KEY) || '{}') }; } catch { P = { ...DEF }; }
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(P)); } catch { } };
@@ -116,8 +116,13 @@ async function load(force) {
   const j = await getJSON('api/feed.json?t=' + Date.now());
   const changed = j.updated !== D.updated;
   Object.assign(D, j);
+  try { D.sources = await getJSON('api/sources.json?t=' + Date.now()); } catch { D.sources = D.sources || []; }
+  D.srcMeta = new Map((D.sources || []).map(x => [x.name, x]));
+  // le testate aggiunte a mano che ora sono attive non sono più "in arrivo"
+  P.pending = (P.pending || []).filter(p => !(D.sources || []).some(x => x.user && x.ok && norm(x.name) === norm(p.name || '')));
   D.byId = new Map(D.stories.map(s => [s.id, s]));
   for (const s of D.stories) s._tok = tokens(s.title + ' ' + s.summary + ' ' + s.articles.slice(0, 6).map(a => a.title).join(' '));
+  D.visVer = -1;
   loaded = true;
   return changed;
 }
@@ -126,7 +131,7 @@ async function load(force) {
 const STOP = new Set('il lo la i gli le un uno una di del della dei degli delle a al alla ai agli alle da dal dalla dai in nel nella nei con su sul sulla per tra fra e ed o ma se che chi cui non più come dove quando anche dopo prima sono è era stato essere ha hanno fa oggi ieri cosa quali quale qual chi perché come sta stanno successo succede ultime notizie news the of to and in on for is are what who'.split(' '));
 const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[’']/g, ' ');
 function tokens(s) { const o = new Set(); for (let w of norm(s).split(/[^a-z0-9]+/)) { if (w.length < 3 || STOP.has(w)) continue; o.add(w.length > 6 ? w.slice(0, 6) : w); } return o; }
-const has = (s, term) => { const t = norm(term).trim(); if (!t) return false; const hay = ' ' + norm(s.title + ' ' + s.summary + ' ' + s.articles.map(a => a.title).join(' ')) + ' '; return new RegExp(`[^a-z0-9]${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(hay); };
+const has = (s, term) => { const t = norm(term).trim(); if (!t) return false; const hay = ' ' + norm(s.title + ' ' + s.summary + ' ' + s.articles.map(a => a.title).join(' ')) + ' '; return new RegExp(`[^a-z0-9]${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-z0-9])`).test(hay); };
 const fav = d => `https://www.google.com/s2/favicons?domain=${encodeURIComponent(d)}&sz=64`;
 const HUES = { ambiente: [150, 175], cronache: [215, 190], cultura: [280, 320], economia: [205, 165], finanza: [160, 200], geopolitica: [225, 260], 'lavoro-e-imprese': [30, 200], mondo: [220, 180], motori: [0, 30], 'politica-italia': [350, 220], salute: [170, 140], scienze: [250, 200], 'societa-e-diritti': [330, 30], spettacolo: [300, 350], sport: [130, 90], tecnologia: [260, 190], 'unione-europea': [230, 50] };
 const grad = c => { const [a, b] = HUES[c] || [220, 180]; return `background:linear-gradient(160deg,hsl(${a} 62% 52%),hsl(${b} 55% 60%))`; };
@@ -152,11 +157,28 @@ function columns() {
 }
 const visibleCols = () => columns().filter(c => !P.hidden.includes(c.id));
 
-function visibleStories() {
-  if (!P.muted.length) return D.stories;
-  const m = new Set(P.muted);
-  return D.stories.filter(s => s.sources.some(x => !m.has(x.src)));
+// Una testata è attiva se: non l'hai spenta, e (è attiva di default oppure l'hai accesa tu)
+function feedEnabled(src) {
+  if (P.muted.includes(src)) return false;
+  const m = D.srcMeta && D.srcMeta.get(src);
+  if (m && m.def === false) return P.feedOn.includes(src);
+  return true;
 }
+let prefVer = 0; const bumpPrefs = () => { prefVer++; };
+function visibleStories() {
+  if (D.visVer === prefVer && D.vis) return D.vis;
+  const out = [];
+  for (const s of D.stories) {
+    const sources = s.sources.filter(x => feedEnabled(x.src));
+    if (!sources.length) continue;
+    if (sources.length === s.sources.length) { out.push(s); continue; }
+    const articles = s.articles.filter(a => feedEnabled(a.src));
+    out.push({ ...s, sources, articles, n: sources.length, title: s.sources[0] && !feedEnabled(s.sources[0].src) && articles[0] ? articles[0].title : s.title });
+  }
+  D.vis = out; D.visById = new Map(out.map(x => [x.id, x])); D.visVer = prefVer;
+  return out;
+}
+const localEnabled = src => !P.localOff.includes(src);
 function storiesFor(col) {
   const now = Date.now(), all = visibleStories();
   const hours = s => (now - s.time) / 36e5;
@@ -179,6 +201,11 @@ function storiesFor(col) {
       return v;
     };
     return all.filter(s => hours(s) < 48).map(s => [score(s), s]).sort((a, b) => b[0] - a[0]).map(x => x[1]);
+  }
+  if (col === 'locali') {
+    const placeHit = s => P.places.some(p => has(s, p));
+    return all.filter(s => (s.cats.includes('locali') && s.sources.some(x => localEnabled(x.src) && (D.srcMeta?.get(x.src)?.local ?? true))) || placeHit(s))
+      .map(s => [s.time + (placeHit(s) ? 8 * 36e5 : 0), s]).sort((a, b) => b[0] - a[0]).map(x => x[1]);
   }
   const custom = P.custom.find(c => c.id === col);
   if (custom) {
@@ -308,6 +335,12 @@ function viewColumn(col) {
   renderChips(col);
   if (col === 'podcast') return paged('c:podcast', D.podcasts, podCard);
   const c = columns().find(x => x.id === col);
+  if (col === 'locali') {
+    const nLoc = (D.sources || []).filter(x => x.local && feedEnabled(x.name) && localEnabled(x.name) && x.ok).length;
+    const h = `<div class="col-head"><div class="kicker">Notizie locali · ${nLoc} testate attive</div>
+      <div class="tags" style="margin-top:8px">${P.places.map(p => `<a class="tag on" href="#/t/luogo/${encodeURIComponent(p)}">${esc(p)}</a>`).join('')}<a class="tag" href="#/profilo/locali">${P.places.length ? 'Gestisci' : '+ Aggiungi il tuo luogo (es. Bra)'}</a></div></div>`;
+    return paged('c:locali', storiesFor('locali'), card, h, `<div class="empty"><h3>Nessuna notizia locale</h3><p>Aggiungi un luogo o attiva qualche testata locale.</p><a class="pill" href="#/profilo/locali">Notizie locali</a></div>`);
+  }
   const head = c.kind === 'custom' ? `<div class="col-head"><div class="kicker">Colonna personalizzata · ${esc([...c.keywords, ...c.sources].join(', ') || 'tutto')}</div><h2>${esc(c.name)}</h2></div>` : '';
   paged('c:' + col, storiesFor(col), card, head);
 }
@@ -380,7 +413,7 @@ function histStore(s) { // memorizza una copia leggera per cronologia/salvati
   const keep = new Set([...P.history.map(h => h.id), ...P.saved]);
   for (const k of Object.keys(P.histData)) if (!keep.has(k)) delete P.histData[k];
 }
-const getStory = id => D.byId.get(id) || (P.histData || {})[id];
+const getStory = id => (visibleStories(), D.visById && D.visById.get(id)) || D.byId.get(id) || (P.histData || {})[id];
 
 // ---------- vista: cronologia ----------
 function viewHistory() {
@@ -409,6 +442,7 @@ function viewProfile(sub) {
       <li><a href="#/profilo/raccolte">${I.cols}Personalizza raccolte<span class="chev">${I.right}</span></a></li>
       <li><a href="#/profilo/testate">${I.news}Personalizza testate<span class="chev">${I.right}</span></a></li>
       <li><a href="#/profilo/luoghi">${I.pin}Personalizza luoghi<span class="chev">${I.right}</span></a></li>
+      <li><a href="#/profilo/locali">${I.pin}Notizie locali<span class="chev">${I.right}</span></a></li>
       <li><a href="#/profilo/autori">${I.pen}Personalizza autori<span class="chev">${I.right}</span></a></li>
       <li><a href="#/profilo/interessi">${I.heart}Personalizza interessi<span class="chev">${I.right}</span></a></li>
       <li><a href="#/profilo/salvati">${I.mark}Salvati<span class="chev">${I.right}</span></a></li>
@@ -419,6 +453,7 @@ function viewProfile(sub) {
     return;
   }
   if (sub === 'testate') return viewTestate(head('Le tue testate'));
+  if (sub === 'locali') return viewLocali(head('Notizie locali'));
   if (sub === 'salvati') {
     const list = P.saved.map(getStory).filter(Boolean);
     return paged('salvati', list, card, head('Salvati'), `<div class="empty"><h3>Nessun articolo salvato</h3><p>Tocca l'icona del segnalibro su una notizia per ritrovarla qui.</p></div>`);
@@ -428,7 +463,7 @@ function viewProfile(sub) {
   if (['luoghi', 'autori', 'interessi'].includes(sub)) return viewEntities(sub, head({ luoghi: 'I tuoi luoghi', autori: 'I tuoi autori', interessi: 'I tuoi interessi' }[sub]));
 }
 
-const PLACES = ['Italia', 'Roma', 'Milano', 'Napoli', 'Torino', 'Palermo', 'Genova', 'Bologna', 'Firenze', 'Bari', 'Catania', 'Venezia', 'Verona', 'Trieste', 'Padova', 'Brescia', 'Bergamo', 'Cagliari', 'Trento', 'Bolzano', 'Perugia', 'Ancona', 'Pescara', 'Lecce', 'Salerno', 'Lombardia', 'Piemonte', 'Veneto', 'Liguria', 'Emilia-Romagna', 'Toscana', 'Lazio', 'Campania', 'Puglia', 'Calabria', 'Sicilia', 'Sardegna', 'Abruzzo', 'Marche', 'Umbria', 'Trentino', 'Friuli', 'Basilicata', 'Molise', "Valle d'Aosta", 'Europa', 'Bruxelles', 'Francia', 'Parigi', 'Germania', 'Berlino', 'Spagna', 'Madrid', 'Regno Unito', 'Londra', 'Stati Uniti', 'Washington', 'New York', 'Russia', 'Mosca', 'Ucraina', 'Kiev', 'Israele', 'Gaza', 'Cisgiordania', 'Libano', 'Iran', 'Siria', 'Turchia', 'Cina', 'Pechino', 'Taiwan', 'Giappone', 'India', 'Pakistan', 'Corea', 'Africa', 'Egitto', 'Libia', 'Tunisia', 'Sudan', 'Brasile', 'Argentina', 'Messico', 'Venezuela', 'Canada', 'Australia', 'Polonia', 'Ungheria', 'Grecia', 'Svizzera', 'Bahrein', 'Arabia Saudita', 'Qatar', 'Groenlandia', 'Danimarca', 'Vaticano'];
+const PLACES = ['Bra', 'Alba', 'Cuneo', 'Fossano', 'Savigliano', 'Saluzzo', 'Mondovì', 'Cherasco', 'Pollenzo', 'Langhe', 'Roero', 'Asti', 'Alessandria', 'Novara', 'Biella', 'Vercelli', 'Italia', 'Roma', 'Milano', 'Napoli', 'Torino', 'Palermo', 'Genova', 'Bologna', 'Firenze', 'Bari', 'Catania', 'Venezia', 'Verona', 'Trieste', 'Padova', 'Brescia', 'Bergamo', 'Cagliari', 'Trento', 'Bolzano', 'Perugia', 'Ancona', 'Pescara', 'Lecce', 'Salerno', 'Lombardia', 'Piemonte', 'Veneto', 'Liguria', 'Emilia-Romagna', 'Toscana', 'Lazio', 'Campania', 'Puglia', 'Calabria', 'Sicilia', 'Sardegna', 'Abruzzo', 'Marche', 'Umbria', 'Trentino', 'Friuli', 'Basilicata', 'Molise', "Valle d'Aosta", 'Europa', 'Bruxelles', 'Francia', 'Parigi', 'Germania', 'Berlino', 'Spagna', 'Madrid', 'Regno Unito', 'Londra', 'Stati Uniti', 'Washington', 'New York', 'Russia', 'Mosca', 'Ucraina', 'Kiev', 'Israele', 'Gaza', 'Cisgiordania', 'Libano', 'Iran', 'Siria', 'Turchia', 'Cina', 'Pechino', 'Taiwan', 'Giappone', 'India', 'Pakistan', 'Corea', 'Africa', 'Egitto', 'Libia', 'Tunisia', 'Sudan', 'Brasile', 'Argentina', 'Messico', 'Venezuela', 'Canada', 'Australia', 'Polonia', 'Ungheria', 'Grecia', 'Svizzera', 'Bahrein', 'Arabia Saudita', 'Qatar', 'Groenlandia', 'Danimarca', 'Vaticano'];
 function entitySuggestions(kind) {
   const counts = new Map();
   if (kind === 'luoghi') { for (const p of PLACES) { const n = D.stories.filter(s => has(s, p)).length; if (n) counts.set(p, n); } }
@@ -456,38 +491,169 @@ function viewEntities(kind, head) {
 }
 async function viewTestate(head) {
   const v = $('#view');
-  v.innerHTML = head + '<div class="feed">' + skel(1) + '</div>';
-  if (!D.sources) D.sources = await getJSON('api/sources.json');
-  let onlyLive = false, q = '';
+  if (!D.sources) { v.innerHTML = head + '<div class="feed">' + skel(1) + '</div>'; D.sources = await getJSON('api/sources.json'); D.srcMeta = new Map(D.sources.map(x => [x.name, x])); }
+  let tab = viewTestate.tab || 'tutte', q = '';
   const draw = () => {
     const f = norm(q);
-    const pass = x => (!f || norm(x.name).includes(f)) && (!onlyLive || x.ok);
-    const row = x => {
-      const isFav = P.fav.includes(x.name), isMuted = P.muted.includes(x.name);
-      return `<div class="trow"><span class="tname ${x.ok ? '' : 'dim'}" data-goto="#/t/testata/${encodeURIComponent(x.name)}" title="${x.ok ? x.count + ' articoli nelle ultime 72 ore' : 'Nessun feed pubblico collegato'}">${esc(x.name)}</span>${x.ok ? '<span class="live"></span>' : ''}<span class="ln"></span>
-        ${isMuted ? `<button data-unmute="${esc(x.name)}" aria-label="Segui di nuovo">${I.plus}</button>` : `<button class="${isFav ? 'on' : ''}" data-fav="${esc(x.name)}" aria-label="Preferita">${I.star}</button><button data-mute="${esc(x.name)}" aria-label="Non seguire">${I.minus}</button>`}</div>`;
+    const hasFeed = x => x.ok || x.feeds > 0;
+    const groups = {
+      tutte: D.sources,
+      attive: D.sources.filter(x => hasFeed(x) && feedEnabled(x.name)),
+      daattivare: D.sources.filter(x => hasFeed(x) && !feedEnabled(x.name)),
+      senzafeed: D.sources.filter(x => !hasFeed(x)),
+      mie: D.sources.filter(x => x.user),
     };
-    const favs = D.sources.filter(x => P.fav.includes(x.name) && pass(x));
-    const followed = D.sources.filter(x => !P.muted.includes(x.name) && pass(x));
-    const muted = D.sources.filter(x => P.muted.includes(x.name) && pass(x));
-    const live = D.sources.filter(x => x.ok).length;
+    const list = groups[tab].filter(x => !f || norm(x.name).includes(f));
+    const pend = (P.pending || []).filter(x => !f || norm(x.name || x.site).includes(f));
+    const tabs = [['tutte', 'Tutte'], ['attive', 'Attive'], ['daattivare', 'Da attivare'], ['senzafeed', 'Senza feed'], ['mie', 'Aggiunte da te']];
     $('#tBody').innerHTML = `
-      <div class="seg"><button class="pill ${onlyLive ? '' : 'on'}" data-seg="all">Tutte (${D.sources.length})</button><button class="pill ${onlyLive ? 'on' : ''}" data-seg="live">Con feed attivo (${live})</button></div>
-      <div class="group-h">Preferite <small>${P.fav.length}</small></div>
-      ${favs.length ? favs.map(row).join('') : '<p class="hint">Non hai ancora nessuna testata preferita! Tocca ☆ per dare priorità a una testata nella colonna Per Te.</p>'}
-      <div class="group-h">Seguite <small>${followed.length}</small></div>${followed.map(row).join('')}
-      ${muted.length ? `<div class="group-h">Non seguite <small>${muted.length}</small></div>${muted.map(row).join('')}` : ''}`;
+      <div class="seg">${tabs.map(([k, l]) => `<button class="pill ${tab === k ? 'on' : ''}" data-ttab="${k}">${l} (${groups[k].length + (k === 'mie' ? (P.pending || []).length : 0)})</button>`).join('')}</div>
+      ${tab === 'mie' && pend.length ? `<div class="group-h">In arrivo <small>attive dal prossimo aggiornamento (circa 15 minuti)</small></div>${pend.map(x => `<div class="trow"><span class="tname">${esc(x.name || x.site)}</span><span class="ln"></span><small class="hint" style="margin:0">${esc(x.site)}</small></div>`).join('')}` : ''}
+      ${list.length ? list.map(srcRow).join('') : `<p class="hint">${tab === 'mie' ? 'Non hai ancora aggiunto testate. Tocca “+ Aggiungi testata tramite link”.' : 'Nessuna testata.'}</p>`}`;
   };
-  v.innerHTML = `${head}<label class="search">${I.search}<input id="tQ" placeholder="Cerca una testata" autocomplete="off"></label><div id="tBody"></div>`;
+  v.innerHTML = `${head}
+    <div class="seg"><button class="pill on" data-addsrc>+ Aggiungi testata tramite link</button></div>
+    <p class="hint">Tocca <b>Attiva feed</b> per far comparire le notizie di una testata. ☆ la mette tra le preferite (più spazio in Per Te).</p>
+    <label class="search">${I.search}<input id="tQ" placeholder="Cerca una testata" autocomplete="off"></label><div id="tBody"></div>`;
   draw();
   $('#tQ').addEventListener('input', e => { q = e.target.value.trim(); draw(); });
-  $('#tBody').addEventListener('click', e => { const b = e.target.closest('[data-seg]'); if (b) { onlyLive = b.dataset.seg === 'live'; draw(); } });
-  viewTestate.redraw = draw;
+  $('#tBody').addEventListener('click', e => { const b = e.target.closest('[data-ttab]'); if (b) { tab = viewTestate.tab = b.dataset.ttab; draw(); } });
+  viewTestate.redraw = () => { if ($('#tBody')) draw(); };
+}
+// riga testata con pulsanti: preferita + attiva/disattiva feed (o "Cerca feed" se non ne ha uno)
+function srcRow(x) {
+  const hasFeed = x.ok || x.feeds > 0, on = hasFeed && feedEnabled(x.name), isFav = P.fav.includes(x.name);
+  return `<div class="trow">
+    <span class="tname ${on ? '' : 'dim'}" data-goto="#/t/testata/${encodeURIComponent(x.name)}" title="${x.ok ? x.count + ' articoli nelle ultime 72 ore' : ''}">${esc(x.name)}</span>${on && x.ok ? '<span class="live"></span>' : ''}${x.local ? '<small class="loc">LOCALE</small>' : ''}<span class="ln"></span>
+    ${hasFeed ? `<button class="${isFav ? 'on' : ''}" data-fav="${esc(x.name)}" aria-label="Preferita">${I.star}</button>` : ''}
+    ${hasFeed ? `<button class="fbtn ${on ? 'on' : ''}" data-feedtoggle="${esc(x.name)}">${on ? 'Feed attivo' : 'Attiva feed'}</button>`
+      : `<button class="fbtn" data-addsrc="${esc(x.name)}">Cerca feed</button>`}
+    ${x.user ? `<button data-removeuser="${esc(x.name)}" aria-label="Rimuovi">${I.trash}</button>` : ''}
+  </div>`;
+}
+function toggleFeed(name) {
+  const on = feedEnabled(name), m = D.srcMeta.get(name);
+  if (on) { if (m && m.def === false) P.feedOn = P.feedOn.filter(x => x !== name); else if (!P.muted.includes(name)) P.muted.push(name); }
+  else { P.muted = P.muted.filter(x => x !== name); if (m && m.def === false && !P.feedOn.includes(name)) P.feedOn.push(name); }
+  save(); bumpPrefs(); for (const k of Object.keys(mem)) delete mem[k];
+  toast(on ? `${name}: feed spento` : `${name}: feed attivo`);
+}
+
+// ---------- Notizie locali ----------
+function viewLocali(head) {
+  const locals = (D.sources || []).filter(x => x.local && (x.ok || x.feeds > 0));
+  const byArea = {};
+  for (const x of locals) (byArea[x.area || (x.user ? 'Aggiunte da te' : 'Altre città')] ||= []).push(x);
+  const order = Object.keys(byArea).sort((a, b) => (a === 'Cuneo' ? -1 : b === 'Cuneo' ? 1 : a === 'Piemonte' ? -1 : b === 'Piemonte' ? 1 : a.localeCompare(b)));
+  const row = x => { const on = feedEnabled(x.name) && localEnabled(x.name);
+    return `<div class="trow"><span class="tname ${on ? '' : 'dim'}" data-goto="#/t/testata/${encodeURIComponent(x.name)}">${esc(x.name)}</span>${on && x.ok ? '<span class="live"></span>' : ''}<span class="ln"></span><button class="fbtn ${on ? 'on' : ''}" data-localtoggle="${esc(x.name)}">${on ? 'Attiva' : 'Attiva feed'}</button>${x.user ? `<button data-removeuser="${esc(x.name)}" aria-label="Rimuovi">${I.trash}</button>` : ''}</div>`; };
+  const sugg = PLACES.slice(0, 16).filter(p => !P.places.includes(p));
+  $('#view').innerHTML = `${head}
+    <p class="hint">La colonna <b>Locali</b> raccoglie le notizie delle testate locali che attivi qui e tutte le notizie che parlano dei tuoi luoghi.</p>
+    <div class="group-h">I tuoi luoghi <small>${P.places.length}</small></div>
+    <div class="tags">${P.places.map(e => `<span class="tag on"><a href="#/t/luogo/${encodeURIComponent(e)}">${esc(e)}</a><span class="x" data-unfollow="places" data-val="${esc(e)}">✕</span></span>`).join('') || '<span class="hint">Nessun luogo: aggiungine uno, ad esempio Bra.</span>'}</div>
+    <form id="placeForm" class="ask-form" style="position:static;margin:10px 0 6px"><input id="placeIn" placeholder="Aggiungi un luogo (es. Bra, Alba, Cuneo)" autocomplete="off"><button>Aggiungi</button></form>
+    <div class="tags">${sugg.map(p => `<span class="tag" data-follow="places" data-val="${esc(p)}">+ ${esc(p)}</span>`).join('')}</div>
+    <div class="group-h" style="margin-top:22px">Testate locali</div>
+    <div class="seg"><button class="pill on" data-addsrc data-local="1">+ Aggiungi testata locale tramite link</button></div>
+    ${order.map(a => `<div class="group-h"><span style="font:12px var(--f-mono);text-transform:uppercase;color:var(--muted)">${esc(a === 'Cuneo' ? 'Provincia di Cuneo' : a)}</span><small>${byArea[a].length}</small></div>${byArea[a].map(row).join('')}`).join('')}
+    ${(P.pending || []).filter(p => p.local).map(p => `<div class="trow"><span class="tname">${esc(p.name || p.site)}</span><span class="ln"></span><small class="hint" style="margin:0">in arrivo</small></div>`).join('')}`;
+  $('#placeForm').addEventListener('submit', e => { e.preventDefault(); const v = $('#placeIn').value.replace(/\s*\(.*\)|,.*$|\s+provincia.*$/i, '').trim(); if (v) { toggleList('places', v, true); viewLocali(head); toast(`Ora segui ${v}: lo trovi nella colonna Locali`); } });
+  viewLocali.redraw = () => { if (location.hash.startsWith('#/profilo/locali')) viewLocali(head); };
+}
+
+// ---------- aggiunta testata tramite link (salvata nel repository, cifrata) ----------
+const GH_KEY = 'rassegna:gh';
+const ghToken = () => { try { return localStorage.getItem(GH_KEY) || ''; } catch { return ''; } };
+const repoInfo = () => { const owner = location.hostname.endsWith('.github.io') ? location.hostname.split('.')[0] : ''; const repo = location.pathname.split('/').filter(Boolean)[0] || ''; return owner && repo ? { owner, repo } : null; };
+async function aesEncrypt(text) {
+  const k = getKey(); const raw = b64(k.replace(/-/g, '+').replace(/_/g, '/') + '=');
+  const key = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt']);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const data = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(text)));
+  const toB64 = u => btoa(String.fromCharCode(...u));
+  return JSON.stringify({ enc: 1, iv: toB64(iv), data: toB64(data) });
+}
+async function aesDecryptText(obj) {
+  const k = getKey(); const raw = b64(k.replace(/-/g, '+').replace(/_/g, '/') + '=');
+  const key = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['decrypt']);
+  return new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64(obj.iv) }, key, b64(obj.data)));
+}
+async function ghUserFeeds(update) {
+  const r = repoInfo(); if (!r) throw new Error('Disponibile solo nella versione online');
+  const url = `https://api.github.com/repos/${r.owner}/${r.repo}/contents/data/feeds-utente.json`;
+  const h = { Authorization: 'Bearer ' + ghToken(), Accept: 'application/vnd.github+json' };
+  let sha, list = [];
+  const g = await fetch(url + '?ref=main', { headers: h, cache: 'no-store' });
+  if (g.status === 401 || g.status === 403) throw Object.assign(new Error('Autorizzazione GitHub non valida'), { auth: true });
+  if (g.ok) {
+    const j = await g.json(); sha = j.sha;
+    const txt = decodeURIComponent(escape(atob(j.content.replace(/\n/g, ''))));
+    const obj = JSON.parse(txt); list = obj.enc ? JSON.parse(await aesDecryptText(obj)) : obj;
+  }
+  const next = update(list);
+  const body = await aesEncrypt(JSON.stringify(next));
+  const pr = await fetch(url, { method: 'PUT', headers: { ...h, 'Content-Type': 'application/json' }, body: JSON.stringify({ message: 'Testate personali aggiornate dall\'app', content: btoa(unescape(encodeURIComponent(body))), sha, branch: 'main' }) });
+  if (pr.status === 401 || pr.status === 403 || pr.status === 404) throw Object.assign(new Error('Autorizzazione GitHub non valida'), { auth: true });
+  if (!pr.ok) throw new Error('Salvataggio non riuscito (' + pr.status + ')');
+  return next;
+}
+function addSourceModal(prefName = '', local = false) {
+  const r = repoInfo();
+  const m = $('#modal'); m.hidden = false;
+  const tokenUrl = r ? `https://github.com/settings/personal-access-tokens/new?name=${encodeURIComponent('Rassegna - testate')}&description=${encodeURIComponent("Permette all'app Rassegna di aggiungere testate")}&target_name=${encodeURIComponent(r.owner)}&expires_in=none&contents=write` : '#';
+  const guess = prefName ? 'www.' + norm(prefName).replace(/['’.]/g, '').replace(/[^a-z0-9]+/g, '') + '.it' : '';
+  m.innerHTML = `<form class="sheet" id="srcForm"><h3>Aggiungi testata</h3>
+    <p>Incolla il link del sito (o del suo feed RSS): il feed viene trovato in automatico e la testata diventa attiva dal prossimo aggiornamento, entro circa 15 minuti.</p>
+    <label>Link del sito</label><input type="text" id="srcSite" placeholder="es. www.ilcorriere.net" value="${esc(guess)}" autocapitalize="off" autocorrect="off" spellcheck="false" required>
+    <label>Nome (facoltativo)</label><input type="text" id="srcName" placeholder="es. Il Corriere di Alba e Bra" value="${esc(prefName)}">
+    <label style="display:flex;gap:8px;align-items:center;text-transform:none;font:15px var(--f-body);color:var(--ink)"><input type="checkbox" id="srcLocal" ${local ? 'checked' : ''}> È una testata locale (va anche in “Locali”)</label>
+    <div id="ghBox" ${ghToken() ? 'hidden' : ''} style="margin-top:14px;padding:12px;border:1px solid var(--line);border-radius:10px">
+      <p style="margin:0 0 8px;color:var(--ink)"><b>Serve un'autorizzazione, una volta sola per dispositivo.</b></p>
+      <p style="margin:0 0 8px">1. Tocca il pulsante: si apre GitHub con il modulo già compilato.<br>2. In “Repository access” scegli <b>Only select repositories</b> → <b>${esc(r ? r.repo : '')}</b>, controlla che “Contents” sia <b>Read and write</b>, poi <b>Generate token</b>.<br>3. Copia il codice che inizia con <code>github_pat_</code> e incollalo qui.</p>
+      <a class="pill" href="${tokenUrl}" target="_blank" rel="noopener" style="display:inline-block;margin-bottom:8px">Crea autorizzazione su GitHub</a>
+      <input type="text" id="ghTok" placeholder="Incolla qui il codice github_pat_…" autocapitalize="off" autocorrect="off" spellcheck="false">
+    </div>
+    <p id="srcMsg" class="hint" style="margin-top:10px"></p>
+    <div class="row"><button type="button" data-close>Annulla</button><button class="primary">Aggiungi</button></div></form>`;
+  $('#srcForm').onsubmit = async e => {
+    e.preventDefault();
+    const msg = $('#srcMsg');
+    const tok = ($('#ghTok')?.value || '').trim();
+    if (tok) { try { localStorage.setItem(GH_KEY, tok); } catch { } }
+    if (!ghToken()) { msg.textContent = 'Incolla prima il codice di autorizzazione GitHub.'; return; }
+    let site = $('#srcSite').value.trim(); if (!site) return;
+    if (!/^https?:\/\//i.test(site)) site = 'https://' + site;
+    let host; try { host = new URL(site).hostname.replace(/^www\./, ''); } catch { msg.textContent = 'Link non valido.'; return; }
+    const name = ($('#srcName').value.trim() || prefName || host).toUpperCase();
+    const isLocal = $('#srcLocal').checked;
+    msg.textContent = 'Salvataggio…';
+    try {
+      await ghUserFeeds(list => [...list.filter(x => norm(x.name || '') !== norm(name) && x.site !== site), { site, name, local: isLocal, added: Date.now() }]);
+      P.pending = [...(P.pending || []).filter(x => x.name !== name), { site, name, local: isLocal }];
+      if (isLocal) P.localOff = P.localOff.filter(x => x !== name);
+      P.feedOn = [...new Set([...P.feedOn, name])]; P.muted = P.muted.filter(x => x !== name);
+      save(); bumpPrefs();
+      m.hidden = true; toast(`${name} aggiunta: attiva dal prossimo aggiornamento (circa 15 minuti)`, 5000);
+      viewTestate.redraw?.(); viewLocali.redraw?.();
+    } catch (err) {
+      if (err.auth) { try { localStorage.removeItem(GH_KEY); } catch { } $('#ghBox').hidden = false; msg.textContent = 'L’autorizzazione non funziona: creane una nuova e incollala qui.'; }
+      else msg.textContent = err.message;
+    }
+  };
+}
+async function removeUserSource(name) {
+  if (!confirm(`Rimuovere ${name} dalle tue testate?`)) return;
+  try {
+    await ghUserFeeds(list => list.filter(x => norm(x.name || '') !== norm(name)));
+    P.pending = (P.pending || []).filter(x => x.name !== name); save();
+    toast(`${name} rimossa: sparirà dal prossimo aggiornamento`, 4000);
+  } catch (err) { toast(err.auth ? 'Autorizzazione GitHub non valida: riaggiungila da “Aggiungi testata”' : err.message, 5000); if (err.auth) try { localStorage.removeItem(GH_KEY); } catch { } }
 }
 function colRows(editing) {
   const cols = columns();
   return cols.map((c, i) => `<li class="${P.hidden.includes(c.id) ? 'off' : ''}" data-colgo="${c.id}">
-    ${c.kind === 'smart' ? I.chip : c.kind === 'custom' ? I.custom : I.folder}<span class="grow">${esc(c.name)}</span>
+    ${c.kind === 'smart' ? I.chip : c.kind === 'custom' ? I.custom : c.kind === 'local' ? `<span class="ci" style="color:#16a34a">${I.pin}</span>` : I.folder}<span class="grow">${esc(c.name)}</span>
     ${editing ? `${i > 0 ? `<button class="mini" data-colup="${c.id}" aria-label="Su">${I.up}</button>` : ''}
       <button class="mini" data-colhide="${c.id}" aria-label="Mostra/nascondi">${I.eye}</button>
       ${c.kind === 'custom' ? `<button class="mini" data-coldel="${c.id}" aria-label="Elimina">${I.trash}</button>` : ''}` : ''}
@@ -663,11 +829,11 @@ function toggleList(key, val, on) {
   if (on && i < 0) arr.push(val); if (!on && i >= 0) arr.splice(i, 1);
   if (key === 'fav' && on) P.muted = P.muted.filter(x => x !== val);
   if (key === 'muted' && on) P.fav = P.fav.filter(x => x !== val);
-  save();
+  save(); bumpPrefs();
   for (const k of Object.keys(mem)) if (k.startsWith('c:')) delete mem[k];
 }
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-refresh],[data-copylink],[data-homeguide],[data-listen],[data-save],[data-share],[data-ask],[data-open],[data-pod],[data-back],[data-acc],[data-fs],[data-more-arts],[data-more-pods],[data-ent],[data-fav],[data-mute],[data-unmute],[data-follow],[data-unfollow],[data-goto],[data-colgo],[data-colup],[data-colhide],[data-coldel],[data-newcol],[data-theme],[data-setfs],[data-reload],[data-reset],[data-clear-history],[data-close]');
+  const t = e.target.closest('[data-refresh],[data-copylink],[data-homeguide],[data-feedtoggle],[data-localtoggle],[data-addsrc],[data-removeuser],[data-listen],[data-save],[data-share],[data-ask],[data-open],[data-pod],[data-back],[data-acc],[data-fs],[data-more-arts],[data-more-pods],[data-ent],[data-fav],[data-mute],[data-unmute],[data-follow],[data-unfollow],[data-goto],[data-colgo],[data-colup],[data-colhide],[data-coldel],[data-newcol],[data-theme],[data-setfs],[data-reload],[data-reset],[data-clear-history],[data-close]');
   if (!t) return;
   const d = t.dataset;
   if (d.listen) { e.stopPropagation(); return speak(d.listen, t); }
@@ -683,6 +849,8 @@ document.addEventListener('click', e => {
   if (d.moreArts) { const s = getStory(d.moreArts); const m = new Set(P.muted); $('#arts').innerHTML = s.articles.filter(a => !m.has(a.src)).map(artRow).join(''); t.remove(); return; }
   if (d.morePods) { const s = getStory(d.morePods); $('#pods').innerHTML = relatedPods(s).map(podRow).join(''); t.remove(); return; }
   if (d.fav) { toggleList('fav', d.fav); return viewTestate.redraw?.(); }
+  if (d.unfollow && location.hash.startsWith('#/profilo/locali')) { e.preventDefault(); toggleList(d.unfollow, d.val, false); return viewLocali.redraw?.(); }
+  if (d.follow && location.hash.startsWith('#/profilo/locali')) { toggleList(d.follow, d.val, true); return viewLocali.redraw?.(); }
   if (d.mute) { toggleList('muted', d.mute, true); toast(`${d.mute}: non segui più questa testata`); return viewTestate.redraw?.(); }
   if (d.unmute) { toggleList('muted', d.unmute, false); return viewTestate.redraw?.(); }
   if (d.follow) {
@@ -705,6 +873,12 @@ document.addEventListener('click', e => {
   if ('clearHistory' in d) { P.history = []; save(); return viewHistory(); }
   if ('close' in d) { $('#modal').hidden = true; return; }
   if ('homeguide' in d) return homeGuide();
+  if (d.feedtoggle) { toggleFeed(d.feedtoggle); return viewTestate.redraw?.(); }
+  if (d.localtoggle) { const n = d.localtoggle; const on = feedEnabled(n) && localEnabled(n);
+    if (on) { P.localOff = [...new Set([...P.localOff, n])]; } else { P.localOff = P.localOff.filter(x => x !== n); if (!feedEnabled(n)) toggleFeed(n); }
+    save(); bumpPrefs(); for (const k of Object.keys(mem)) delete mem[k]; return viewLocali.redraw?.(); }
+  if ('addsrc' in d) return addSourceModal(d.addsrc || '', d.local === '1');
+  if (d.removeuser) return removeUserSource(d.removeuser);
   if ('copylink' in d) { const link = privateLink(); (navigator.clipboard ? navigator.clipboard.writeText(link) : Promise.reject()).then(() => toast('Link privato copiato'), () => prompt('Copia il link privato:', link)); return; }
 });
 $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') e.currentTarget.hidden = true; });
