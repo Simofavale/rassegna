@@ -387,3 +387,44 @@ html { -webkit-text-size-adjust: 100%; }
 .top-head .pill { display: inline-flex; align-items: center; gap: 6px; }
 .top-head .pill svg { width: 18px; height: 18px; }
 .trow .fbtn.warn { background: #fde68a; color: #92400e; }
+
+/* ---------- Ionicons ---------- */
+svg.ion { fill: currentColor; stroke: none; }
+.on > svg.ion path, .act.on svg.ion path, .pill-btn.on svg.ion path, .trow button.on svg.ion path { fill: currentColor; }
+#tabbar .ti { width: 26px; height: 26px; }
+#tabbar .ti-ai svg.ion { width: 16px; height: 16px; fill: #fff; }
+#tabbar .ti-ai svg.ion path { fill: #fff; }
+.ask svg.ion { fill: var(--ai-a); }
+.askbox .btn-ai svg.ion, .askbox .btn-ai svg.ion path { fill: #b9a8ff; }
+.ask-hero .orb svg.ion { width: 34px; height: 34px; fill: #fff; }
+#refreshBtn svg.ion, #menuBtn svg.ion { width: 26px; height: 26px; }
+.round-add svg.ion { width: 22px; height: 22px; }
+.round-add svg.ion path { stroke: #fff; }
+.time svg.ion { width: 15px; height: 15px; }
+.actions .act svg.ion { width: 23px; height: 23px; }
+.pod .play svg.ion, .pcard .row .playbig svg.ion { fill: currentColor; }
+#plToggle svg.ion { fill: #fff; }
+
+/* ---------- iPad orizzontale / computer: barra laterale come Column ---------- */
+@media (min-width: 1000px) {
+  :root { --rail: 84px; }
+  #app { padding-left: var(--rail); }
+  #tabbar {
+    top: 0; bottom: 0; left: 0; right: auto; width: var(--rail); height: auto;
+    grid-template-columns: none; grid-auto-rows: 74px; align-content: start;
+    padding: calc(84px + env(safe-area-inset-top)) 0 0; border-top: 0; border-right: 1px solid var(--line);
+  }
+  #tabbar a { justify-content: center; padding-top: 0; }
+  #view { padding-bottom: 60px; }
+  #player { left: calc(50% + var(--rail) / 2); bottom: 16px; }
+  #toast { left: calc(50% + var(--rail) / 2); bottom: 30px; }
+  #ptr { left: calc(50% + var(--rail) / 2); }
+}
+@media (min-width: 1100px) {
+  #view.two { display: grid; grid-template-columns: minmax(0, 1fr) 360px; column-gap: 32px; align-items: start; max-width: 1220px; }
+  #view.two > * { grid-column: 1; }
+  #view.two .feed { display: flex; flex-direction: column; }
+  #view.two > aside.side { grid-column: 2; grid-row: 1 / span 20; position: sticky; top: 76px; max-height: calc(100vh - 96px); overflow-y: auto; padding-top: 6px; }
+  .side-h { font-family: var(--f-title); font-style: italic; font-size: 26px; margin: 4px 0 16px; }
+  .side .pod img { width: 84px; height: 84px; }
+}
