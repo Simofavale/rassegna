@@ -327,8 +327,8 @@ async function translateAll(groups) {
     await new Promise(r => setTimeout(r, 150));
     try {
       const res = (await gtx(b.join('\n'), sl)).split('\n');
-      if (res.length === b.length) { b.forEach((t, i) => { const v = res[i].trim(); if (v && v !== t) { out.set(t, v); trCache.set(trKey(t), v); } }); return; }
-      for (const t of b) { if (stop) return; const v = (await gtx(t, sl)).trim(); if (v && v !== t) { out.set(t, v); trCache.set(trKey(t), v); } }
+      if (res.length === b.length) { b.forEach((t, i) => { const v = res[i].trim(); if (v) { out.set(t, v); trCache.set(trKey(t), v); } }); return; }
+      for (const t of b) { if (stop) return; const v = (await gtx(t, sl)).trim(); if (v) { out.set(t, v); trCache.set(trKey(t), v); } }
     } catch (e) { if (e.rate) stop = true; }
   });
   return { out, pending: todo.filter(t => !out.has(t)).length, fresh: todo.length };
