@@ -2,7 +2,7 @@
 // Regola semplice: si va sempre in rete; la copia salvata serve solo quando la rete manca.
 // (Niente opzioni extra sulle richieste: su Safari possono far fallire le richieste di pagina
 // e far restare in uso una versione vecchia.)
-const CACHE = 'rassegna-v7';
+const CACHE = 'rassegna-v8';
 const BASE = new URL('./', self.location).pathname;
 
 self.addEventListener('install', () => self.skipWaiting());
@@ -21,8 +21,11 @@ self.addEventListener('fetch', e => {
   const isCode = /\.(js|css)$/.test(p);
   if (!isPage && !isData && !isCode) return;
   const key = isPage ? BASE : (isData ? BASE + p : req.url);
+  // la pagina principale va sempre ricontrollata (GitHub Pages la fa tenere in cache 10 minuti):
+  // si crea una richiesta nuova dall'indirizzo, senza riusare quella di navigazione
+  const net = isPage || isData ? fetch(new Request(u.href, { cache: 'no-cache', credentials: 'same-origin' })) : fetch(req);
   e.respondWith(
-    fetch(req).then(r => {
+    net.then(r => {
       if (r.ok) { const c = r.clone(); caches.open(CACHE).then(x => x.put(key, c)); }
       return r;
     }).catch(() => caches.match(key).then(r => r || Response.error()))
