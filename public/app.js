@@ -303,7 +303,11 @@ window.addEventListener('scroll', () => { if (current.key) mem[current.key] = { 
 function paged(key, list, renderItem, headHTML = '', emptyHTML = '') {
   const v = $('#view');
   v.classList.add('wide');
-  if (key.startsWith('c:')) headHTML = `<div class="upd"><span>Aggiornato alle ${new Date(D.updated).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}</span><button data-refresh>Aggiorna ↻</button></div>` + headHTML;
+  if (key.startsWith('c:')) {
+    const age = (Date.now() - D.updated) / 6e4;
+    const when = new Date(D.updated).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+    headHTML = `<div class="upd"><span${age > 45 ? ' style="color:#d97706"' : ''}>${age > 45 ? `⚠ Notizie delle ${when} (${age > 90 ? Math.round(age / 60) + ' ore' : Math.round(age) + ' min'} fa)` : `Aggiornato alle ${when}`}</span><button data-refresh>Aggiorna ↻</button></div>` + headHTML;
+  }
   current = { key, list, shown: 0, renderItem };
   if (!list.length) { v.innerHTML = headHTML + (emptyHTML || '<div class="empty"><h3>Nessuna notizia</h3><p>Non ci sono ancora notizie per questa colonna.</p></div>'); window.scrollTo(0, 0); return; }
   v.innerHTML = `${headHTML}<div class="feed" id="feed"></div><div class="sentinel" id="sentinel"></div><div class="end" id="end" hidden>Sei aggiornato · ${list.length} elementi</div>`;

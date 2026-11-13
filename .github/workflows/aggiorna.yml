@@ -1,9 +1,11 @@
 name: Aggiorna notizie
 
 on:
+  # L'orario programmato di GitHub è inaffidabile (spesso non parte): resta solo come riserva.
+  # Il ritmo vero lo dà il job "prossimo" in fondo, che a fine giro riavvia questo workflow.
   schedule:
-    - cron: "*/15 * * * *"   # ogni 15 minuti (GitHub può ritardare di qualche minuto)
-  workflow_dispatch:          # avvio manuale dalla scheda Actions
+    - cron: "*/30 * * * *"
+  workflow_dispatch:          # avvio manuale e catena automatica
   push:
     branches: [main]
 
@@ -11,6 +13,7 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  actions: write
 
 concurrency:
   group: pages
@@ -60,3 +63,23 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  # Catena: aspetta ~12 minuti e fa partire il prossimo aggiornamento (anche se questo giro è fallito).
+  # Se c'è già un altro giro in coda o in corso, non ne avvia un secondo.
+  prossimo:
+    needs: [build, deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Attendi
+        run: sleep 720
+      - name: Avvia il prossimo aggiornamento
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          altri=$(gh run list --repo "$REPO" --workflow aggiorna.yml --limit 20 --json databaseId,status \
+            --jq "[.[] | select(.databaseId != ${{ github.run_id }}) | select(.status==\"queued\" or .status==\"in_progress\" or .status==\"waiting\" or .status==\"pending\")] | length")
+          echo "altri giri attivi: $altri"
+          if [ "$altri" = "0" ]; then gh workflow run aggiorna.yml --repo "$REPO" --ref main; fi
