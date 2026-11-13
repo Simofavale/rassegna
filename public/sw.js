@@ -1,25 +1,30 @@
 // Service worker: l'app resta consultabile anche offline con le ultime notizie scaricate.
-// Percorsi relativi alla cartella dell'app (funziona anche su GitHub Pages in sottocartella).
-const SHELL = 'rassegna-shell-v6';
-const DATA = 'rassegna-data-v1';
+// Regola semplice: si va sempre in rete; la copia salvata serve solo quando la rete manca.
+// (Niente opzioni extra sulle richieste: su Safari possono far fallire le richieste di pagina
+// e far restare in uso una versione vecchia.)
+const CACHE = 'rassegna-v7';
 const BASE = new URL('./', self.location).pathname;
-const FILES = ['', 'index.html', 'styles.css', 'app.js', 'icon.svg', 'icona-192.png', 'icona-home-180.png'].map(f => BASE + f);
 
-self.addEventListener('install', e => { e.waitUntil(caches.open(SHELL).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
+self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', e => {
-  e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== SHELL && k !== DATA).map(k => caches.delete(k)))).then(() => self.clients.claim()));
+  e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
 self.addEventListener('fetch', e => {
-  const u = new URL(e.request.url);
-  if (e.request.method !== 'GET' || u.origin !== location.origin) return;
+  const req = e.request;
+  if (req.method !== 'GET') return;
+  const u = new URL(req.url);
+  if (u.origin !== location.origin) return;
   const p = u.pathname.slice(BASE.length);
-  if (p === 'api/feed.json' || p === 'api/sources.json') {
-    // rete prima, copia salvata se offline
-    e.respondWith(fetch(e.request, { cache: 'no-cache' }).then(r => { const c = r.clone(); caches.open(DATA).then(x => x.put(p, c)); return r; })
-      .catch(() => caches.match(p)));
-    return;
-  }
-  if (p.startsWith('api/')) return;
-  e.respondWith(fetch(e.request, { cache: 'no-cache' }).then(r => { const c = r.clone(); caches.open(SHELL).then(x => x.put(e.request, c)); return r; })
-    .catch(() => caches.match(e.request).then(r => r || caches.match(BASE + 'index.html'))));
+  // solo pagina, codice e dati; immagini e icone passano direttamente
+  const isPage = req.mode === 'navigate';
+  const isData = p === 'api/feed.json' || p === 'api/sources.json';
+  const isCode = /\.(js|css)$/.test(p);
+  if (!isPage && !isData && !isCode) return;
+  const key = isPage ? BASE : (isData ? BASE + p : req.url);
+  e.respondWith(
+    fetch(req).then(r => {
+      if (r.ok) { const c = r.clone(); caches.open(CACHE).then(x => x.put(key, c)); }
+      return r;
+    }).catch(() => caches.match(key).then(r => r || Response.error()))
+  );
 });
