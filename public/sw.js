@@ -1,9 +1,9 @@
 // Service worker: l'app resta consultabile anche offline con le ultime notizie scaricate.
 // Percorsi relativi alla cartella dell'app (funziona anche su GitHub Pages in sottocartella).
-const SHELL = 'rassegna-shell-v5';
+const SHELL = 'rassegna-shell-v6';
 const DATA = 'rassegna-data-v1';
 const BASE = new URL('./', self.location).pathname;
-const FILES = ['', 'index.html', 'styles.css', 'app.js', 'icon.svg', 'icon-192.png', 'apple-touch-icon.png'].map(f => BASE + f);
+const FILES = ['', 'index.html', 'styles.css', 'app.js', 'icon.svg', 'icona-192.png', 'icona-home-180.png'].map(f => BASE + f);
 
 self.addEventListener('install', e => { e.waitUntil(caches.open(SHELL).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {
