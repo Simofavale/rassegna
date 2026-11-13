@@ -48,11 +48,29 @@ async function discoverFeed(input, ms = 10000) {
     cands.push(href);
   }
   const origin = new URL(page.url).origin;
-  for (const p of ['/feed/', '/rss', '/rss.xml', '/feed', '/rss/', '/feed.xml', '/index.xml', '/atom.xml', '/?feed=rss2']) cands.push(origin + p);
-  for (const c of [...new Set(cands)].slice(0, 10)) {
-    try { const f = await get(c, ms); if (isFeed(f.text)) return { site: origin, feed: f.url, domain, lang }; } catch { }
-  }
-  return null;
+  const sub = new URL(page.url).hostname.split('.')[0];
+  // collegamenti nella pagina che sembrano feed (es. "/rss/home.xml")
+  const links = [];
+  const ra = /<a\b[^>]*href=["']([^"']+)["']/gi; let a;
+  while ((a = ra.exec(page.text))) { const h = decode(a[1]); if (/rss|feed|atom/i.test(h) && !/comment|podcast|itunes|feedburner\.google/i.test(h)) { try { links.push(new URL(h, page.url).href); } catch { } } }
+  const guesses = ['/feed/', '/rss', '/rss.xml', '/feed', '/rss/', '/feed.xml', '/rss/home.xml', `/rss/${sub}.xml`, '/rss/index.xml', '/rss/rss.xml', '/rss/feed.xml', '/rss/ultimora.xml', '/rss/homepage.xml', '/feeds/rss', '/index.xml', '/atom.xml', '/?feed=rss2'].map(p => origin + p);
+  const tried = new Set();
+  const tryList = async list => {
+    for (const c of list) {
+      if (tried.has(c)) continue; tried.add(c);
+      try {
+        const f = await get(c, ms);
+        if (isFeed(f.text)) return { site: origin, feed: f.url, domain, lang };
+        // pagina "RSS" con l'elenco dei feed: prende il primo .xml
+        if (/rss|feed/i.test(c) && tried.size < 30) {
+          const m2 = f.text.match(/href=["']([^"']+\.(?:xml|rss)(?:\?[^"']*)?)["']/i);
+          if (m2) { const u2 = new URL(decode(m2[1]), f.url).href; if (!tried.has(u2)) { tried.add(u2); const g = await get(u2, ms).catch(() => null); if (g && isFeed(g.text)) return { site: origin, feed: g.url, domain, lang }; } }
+        }
+      } catch { }
+    }
+    return null;
+  };
+  return (await tryList([...new Set(cands)].slice(0, 8))) || (await tryList([...new Set(links)].slice(0, 8))) || (await tryList(guesses));
 }
 
 module.exports = { discoverFeed, guessSites, LOCAL_RE };

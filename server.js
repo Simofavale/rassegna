@@ -25,14 +25,16 @@ function decryptJSON(obj) {
   return JSON.parse(Buffer.concat([d.update(raw.subarray(0, raw.length - 16)), d.final()]).toString('utf8'));
 }
 const discovered = new Map();
+let userFailed = [];
 async function loadFeeds() {
+  userFailed = [];
   let user = [];
   try { user = decryptJSON(readJSON('data/feeds-utente.json', [])) || []; } catch (e) { console.warn('feed utente non leggibili:', e.message); }
   const userFeeds = (await pool(user, 6, async u => {
     let feed = u.feed;
     if (!feed) {
       if (!discovered.has(u.site)) discovered.set(u.site, await discoverFeed(u.site).catch(() => null));
-      const d = discovered.get(u.site); if (!d) { console.warn('  feed non trovato per', u.site); return null; }
+      const d = discovered.get(u.site); if (!d) { console.warn('  feed non trovato per', u.site); userFailed.push({ name: (u.name || u.site).toUpperCase(), site: u.site, local: !!u.local }); return null; }
       feed = d.feed; u.domain = u.domain || d.domain;
     }
     const domain = u.domain || new URL(/^https?:/.test(u.site || feed) ? (u.site || feed) : 'https://' + u.site).hostname.replace(/^www\./, '');
@@ -486,7 +488,10 @@ function sourcesList() {
     active.set(f.src, a);
   }
   const names = [...new Set([...TESTATE, ...active.keys()])].sort((a, b) => a.localeCompare(b, 'it'));
-  return names.map(name => ({ name, ...(active.get(name) || { feeds: 0, ok: 0, count: 0, def: false, local: false, user: false }) }));
+  const list = names.map(name => ({ name, ...(active.get(name) || { feeds: 0, ok: 0, count: 0, def: false, local: false, user: false }) }));
+  // testate aggiunte dall'utente per cui non è stato trovato un feed
+  for (const f of userFailed) { const x = list.find(y => y.name === f.name); if (x) { x.user = true; x.failed = true; x.site = f.site; } else list.push({ name: f.name, feeds: 0, ok: 0, count: 0, def: true, local: f.local, user: true, failed: true, site: f.site }); }
+  return list;
 }
 
 // ---------- HTTP ----------

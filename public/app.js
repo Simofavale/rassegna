@@ -119,7 +119,7 @@ async function load(force) {
   try { D.sources = await getJSON('api/sources.json?t=' + Date.now()); } catch { D.sources = D.sources || []; }
   D.srcMeta = new Map((D.sources || []).map(x => [x.name, x]));
   // le testate aggiunte a mano che ora sono attive non sono più "in arrivo"
-  P.pending = (P.pending || []).filter(p => !(D.sources || []).some(x => x.user && x.ok && norm(x.name) === norm(p.name || '')));
+  P.pending = (P.pending || []).filter(p => !(D.sources || []).some(x => x.user && (x.ok || x.failed) && norm(x.name) === norm(p.name || '')));
   D.byId = new Map(D.stories.map(s => [s.id, s]));
   for (const s of D.stories) s._tok = tokens(s.title + ' ' + s.summary + ' ' + s.articles.slice(0, 6).map(a => a.title).join(' '));
   D.visVer = -1;
@@ -639,7 +639,8 @@ function srcRow(x) {
   return `<div class="trow">
     <span class="tname ${on ? '' : 'dim'}" data-goto="#/t/testata/${encodeURIComponent(x.name)}" title="${x.ok ? x.count + ' articoli nelle ultime 72 ore' : ''}">${esc(x.name)}</span>${on && x.ok ? '<span class="live"></span>' : ''}${x.local ? '<small class="loc">LOCALE</small>' : ''}<span class="ln"></span>
     ${hasFeed ? `<button class="${isFav ? 'on' : ''}" data-fav="${esc(x.name)}" aria-label="Preferita">${I.star}</button>` : ''}
-    ${hasFeed ? `<button class="fbtn ${on ? 'on' : ''}" data-feedtoggle="${esc(x.name)}">${on ? 'Feed attivo' : 'Attiva feed'}</button>`
+    ${x.failed ? `<button class="fbtn warn" data-addsrc="${esc(x.name)}" title="Feed non trovato su ${esc(x.site || '')}">Feed non trovato: riprova</button>`
+      : hasFeed ? `<button class="fbtn ${on ? 'on' : ''}" data-feedtoggle="${esc(x.name)}">${on ? 'Feed attivo' : 'Attiva feed'}</button>`
       : `<button class="fbtn" data-addsrc="${esc(x.name)}">Cerca feed</button>`}
     ${x.user ? `<button data-removeuser="${esc(x.name)}" aria-label="Rimuovi">${I.trash}</button>` : ''}
   </div>`;
@@ -718,7 +719,7 @@ function addSourceModal(prefName = '', local = false) {
   const tokenUrl = ghTokenUrl();
   const guess = prefName ? 'www.' + norm(prefName).replace(/['’.]/g, '').replace(/[^a-z0-9]+/g, '') + '.it' : '';
   m.innerHTML = `<form class="sheet" id="srcForm"><h3>Aggiungi testata</h3>
-    <p>Incolla il link del sito (o del suo feed RSS): il feed viene trovato in automatico e la testata diventa attiva dal prossimo aggiornamento, entro circa 15 minuti.</p>
+    <p>Incolla il link del sito (o del suo feed RSS): il feed viene trovato in automatico e la testata diventa attiva dal prossimo aggiornamento. Se il feed non viene trovato, incolla direttamente il link del feed RSS (di solito si trova in fondo al sito, alla voce “RSS”).</p>
     <label>Link del sito</label><input type="text" id="srcSite" placeholder="es. www.ilcorriere.net" value="${esc(guess)}" autocapitalize="off" autocorrect="off" spellcheck="false" required>
     <label>Nome (facoltativo)</label><input type="text" id="srcName" placeholder="es. Il Corriere di Alba e Bra" value="${esc(prefName)}">
     <label style="display:flex;gap:8px;align-items:center;text-transform:none;font:15px var(--f-body);color:var(--ink)"><input type="checkbox" id="srcLocal" ${local ? 'checked' : ''}> È una testata locale (va anche in “Locali”)</label>
@@ -743,7 +744,8 @@ function addSourceModal(prefName = '', local = false) {
     const isLocal = $('#srcLocal').checked;
     msg.textContent = 'Salvataggio…';
     try {
-      await ghUserFeeds(list => [...list.filter(x => norm(x.name || '') !== norm(name) && x.site !== site), { site, name, local: isLocal, added: Date.now() }]);
+      const isFeedUrl = /(\.xml|\/rss|\/feed|atom)(\/|\?|$)/i.test(site);
+      await ghUserFeeds(list => [...list.filter(x => norm(x.name || '') !== norm(name) && x.site !== site), { site, ...(isFeedUrl ? { feed: site } : {}), name, local: isLocal, added: Date.now() }]);
       P.pending = [...(P.pending || []).filter(x => x.name !== name), { site, name, local: isLocal }];
       if (isLocal) P.localOff = P.localOff.filter(x => x !== name);
       P.feedOn = [...new Set([...P.feedOn, name])]; P.muted = P.muted.filter(x => x !== name);

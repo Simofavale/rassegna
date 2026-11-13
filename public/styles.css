@@ -386,3 +386,4 @@ html { -webkit-text-size-adjust: 100%; }
 .top-head h2 { font-style: italic; font-size: 26px; }
 .top-head .pill { display: inline-flex; align-items: center; gap: 6px; }
 .top-head .pill svg { width: 18px; height: 18px; }
+.trow .fbtn.warn { background: #fde68a; color: #92400e; }
