@@ -1,0 +1,17 @@
+[
+  {"search":"Il Mondo Internazionale","name":"Il Mondo","publisher":"Internazionale","cat":"mondo"},
+  {"search":"Globo Il Post Eugenio Cau","name":"Globo","publisher":"Il Post","cat":"mondo"},
+  {"search":"Start Il Sole 24 Ore","name":"Start","publisher":"Il Sole 24 Ore","cat":"economia"},
+  {"search":"Daily Cogito","name":"Daily Cogito","publisher":"Daily Cogito","cat":"cultura"},
+  {"search":"Stories Cecilia Sala Chora","name":"Stories","publisher":"Chora Media","cat":"mondo"},
+  {"search":"Fanpage.it podcast","name":"Fanpage.it","publisher":"Fanpage","cat":"cronache"},
+  {"search":"Il Fatto Quotidiano podcast","name":"Il Fatto Quotidiano","publisher":"Il Fatto Quotidiano","cat":"politica-italia"},
+  {"search":"Prima Pagina Corriere della Sera","name":"Prima Pagina","publisher":"Corriere della Sera","cat":"politica-italia"},
+  {"search":"Radio3 Mondo","name":"Radio3 Mondo","publisher":"Rai Radio 3","cat":"geopolitica"},
+  {"search":"Il Foglio podcast","name":"Il Foglio","publisher":"Il Foglio","cat":"politica-italia"},
+  {"search":"ISPI podcast","name":"ISPI","publisher":"ISPI","cat":"geopolitica"},
+  {"search":"Wired Italia podcast","name":"Wired Italia","publisher":"Wired","cat":"tecnologia"},
+  {"search":"Ultimo Uomo podcast","name":"Ultimo Uomo","publisher":"Ultimo Uomo","cat":"sport"},
+  {"search":"Linkiesta podcast","name":"Linkiesta","publisher":"Linkiesta","cat":"politica-italia"},
+  {"search":"Avvenire podcast","name":"Avvenire","publisher":"Avvenire","cat":"societa-e-diritti"}
+]

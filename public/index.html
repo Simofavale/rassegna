@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cut">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e0e10" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Rassegna">
+<meta name="format-detection" content="telephone=no">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="referrer" content="no-referrer">
+<title>Rassegna</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Geist:wght@400;500;600&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <button id="menuBtn" class="icon-btn" aria-label="Colonne"><svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+    <nav id="chips" aria-label="Colonne"></nav>
+    <button id="refreshBtn" class="icon-btn" aria-label="Aggiorna notizie" title="Aggiorna notizie"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></button>
+  </header>
+  <div id="ptr"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg><span>Trascina per aggiornare</span></div>
+  <div id="updBar" hidden></div>
+
+  <aside id="drawer" aria-hidden="true">
+    <div class="drawer-head">
+      <span class="drawer-title">COLONNE</span>
+      <div class="drawer-actions">
+        <button id="editCols" class="pill">Modifica</button>
+        <button id="addCol" class="round-add" aria-label="Nuova colonna"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+      </div>
+    </div>
+    <ul id="colList"></ul>
+  </aside>
+  <div id="scrim"></div>
+
+  <main id="view"></main>
+
+  <div id="player" hidden>
+    <img id="plImg" alt="">
+    <div class="pl-meta"><div id="plTitle"></div><div id="plShow"></div></div>
+    <button id="plToggle" class="icon-btn" aria-label="Play/Pausa"></button>
+    <button id="plClose" class="icon-btn" aria-label="Chiudi"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <div id="plBar"><div id="plProg"></div></div>
+    <audio id="audio" preload="none"></audio>
+  </div>
+
+  <nav id="tabbar">
+    <a href="#/" data-tab="adesso"><span class="ti ti-dot"></span><span>Adesso</span></a>
+    <a href="#/cronologia" data-tab="cronologia"><svg class="ti" viewBox="0 0 24 24"><path d="M6 3h12M6 21h12M7 3c0 5 10 5 10 9s-10 4-10 9M17 3c0 5-10 5-10 9"/></svg><span>Cronologia</span></a>
+    <a href="#/profilo" data-tab="profilo"><svg class="ti" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5"/><circle cx="12" cy="10" r="3.2"/><path d="M5.8 18.6c1.5-2.2 3.6-3.3 6.2-3.3s4.7 1.1 6.2 3.3"/></svg><span>Profilo</span></a>
+    <a href="#/chiedi" data-tab="chiedi"><span class="ti ti-ai"><svg viewBox="0 0 24 24"><path d="M12 3c.6 4.6 3.4 7.4 8 8-4.6.6-7.4 3.4-8 8-.6-4.6-3.4-7.4-8-8 4.6-.6 7.4-3.4 8-8z"/></svg></span><span>Chiedi</span></a>
+  </nav>
+
+  <div id="modal" hidden></div>
+  <div id="toast" hidden></div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

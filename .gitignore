@@ -1,0 +1,5 @@
+_site/
+data/translations.json
+node_modules/
+.DS_Store
+.claude/
