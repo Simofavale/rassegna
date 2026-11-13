@@ -1,0 +1,62 @@
+name: Aggiorna notizie
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # ogni 15 minuti (GitHub può ritardare di qualche minuto)
+  workflow_dispatch:          # avvio manuale dalla scheda Actions
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # cache delle traduzioni tra un'esecuzione e l'altra: si traducono solo gli articoli nuovi
+      - name: Ripristina traduzioni
+        uses: actions/cache/restore@v4
+        with:
+          path: data/translations.json
+          key: translations-${{ github.run_id }}
+          restore-keys: translations-
+
+      - name: Scarica, traduci e genera il sito
+        run: node server.js --build _site
+        env:
+          RASSEGNA_KEY: ${{ secrets.RASSEGNA_KEY }}
+
+      - name: Salva traduzioni
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/translations.json
+          key: translations-${{ github.run_id }}
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
